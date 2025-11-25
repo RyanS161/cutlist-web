@@ -2,7 +2,8 @@
 
 import io
 import traceback
-from contextlib import redirect_stdout, redirect_stderr
+import logging
+from contextlib import redirect_stdout, redirect_stderr, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +14,42 @@ from typing import List, Optional, Any
 from .services.gemini_service import get_gemini_service
 from .config import get_settings
 
+logger = logging.getLogger(__name__)
+
+# Global cache for pre-imported modules
+_cached_modules: dict = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown events."""
+    # Startup: Pre-import heavy modules
+    logger.info("Pre-importing CadQuery (this may take a moment)...")
+    try:
+        import cadquery as cq
+        _cached_modules["cq"] = cq
+        _cached_modules["cadquery"] = cq
+        logger.info("CadQuery imported successfully")
+    except ImportError as e:
+        logger.warning(f"CadQuery not available: {e}")
+    
+    # Pre-import other common modules
+    import math
+    import json
+    _cached_modules["math"] = math
+    _cached_modules["json"] = json
+    
+    logger.info("Server ready!")
+    yield
+    # Shutdown
+    logger.info("Shutting down...")
+
+
 app = FastAPI(
     title="Gemini Chat API",
     description="Backend API for streaming chat with Google Gemini",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS for local development
@@ -86,21 +119,11 @@ async def execute_code(request: ExecuteCodeRequest):
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     
-    # Create a restricted globals dict for execution
-    # Include common safe modules
+    # Create globals dict with pre-cached modules
     exec_globals = {
         "__builtins__": __builtins__,
-        "math": __import__("math"),
-        "json": __import__("json"),
+        **_cached_modules,  # Use pre-imported modules
     }
-    
-    # Try to import cadquery if available
-    try:
-        import cadquery as cq
-        exec_globals["cq"] = cq
-        exec_globals["cadquery"] = cq
-    except ImportError:
-        pass
     
     exec_locals = {}
     result = None
