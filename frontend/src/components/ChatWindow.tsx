@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../hooks/useChat';
-import { getDefaultSystemPrompt } from '../services/api';
-import { CodePanel } from './CodePanel';
+import { getDefaultSystemPrompt, executeCode } from '../services/api';
+import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
 /**
@@ -11,16 +11,45 @@ export function ChatWindow() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(true);
   const [designCode, setDesignCode] = useState('');
+  const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
   
+  // Execute code when it changes (from model or user save)
+  const runCode = useCallback(async (code: string) => {
+    if (!code.trim()) return;
+    
+    setExecutionResult({ status: 'running' });
+    
+    try {
+      const result = await executeCode(code);
+      setExecutionResult({
+        status: result.success ? 'success' : 'error',
+        output: result.output,
+        error: result.error,
+        result: result.result,
+      });
+    } catch (err) {
+      setExecutionResult({
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Failed to execute code',
+      });
+    }
+  }, []);
+  
   // Callbacks for the chat hook
   const handleCodeUpdate = useCallback((code: string) => {
     setDesignCode(code);
   }, []);
+  
+  // Handle code change from user edits (save button)
+  const handleUserCodeChange = useCallback((code: string) => {
+    setDesignCode(code);
+    runCode(code);
+  }, [runCode]);
   
   const getCurrentCode = useCallback(() => {
     return designCodeRef.current;
@@ -72,6 +101,7 @@ export function ChatWindow() {
   const handleClearChat = () => {
     clearChat();
     setDesignCode('');
+    setExecutionResult({ status: 'idle' });
     // Reload default system prompt
     setIsLoadingPrompt(true);
     getDefaultSystemPrompt()
@@ -79,6 +109,16 @@ export function ChatWindow() {
       .catch((err) => console.error('Failed to load system prompt:', err))
       .finally(() => setIsLoadingPrompt(false));
   };
+  
+  // Run code when streaming completes and there's new code
+  const prevStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    // Detect when streaming just finished
+    if (prevStreamingRef.current && !isStreaming && designCode) {
+      runCode(designCode);
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, designCode, runCode]);
 
   return (
     <div className="app-container">
@@ -170,8 +210,9 @@ export function ChatWindow() {
       {chatStarted && (
         <CodePanel
           code={designCode}
-          onCodeChange={setDesignCode}
+          onCodeChange={handleUserCodeChange}
           isStreaming={isStreaming}
+          executionResult={executionResult}
         />
       )}
     </div>

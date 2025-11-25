@@ -112,6 +112,32 @@ export async function checkHealth(): Promise<{ status: string; model: string }> 
   return response.json();
 }
 
+export interface ExecuteCodeResult {
+  success: boolean;
+  output: string;
+  error?: string;
+  result?: string;
+}
+
+/**
+ * Execute Python code on the backend.
+ */
+export async function executeCode(code: string): Promise<ExecuteCodeResult> {
+  const response = await fetch(`${API_BASE}/execute`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ code }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Code execution failed: ${response.status}`);
+  }
+  
+  return response.json();
+}
+
 /**
  * Get the default system prompt from the backend.
  */

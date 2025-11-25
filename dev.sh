@@ -33,13 +33,7 @@ trap cleanup SIGINT SIGTERM
 # Start backend
 echo -e "${GREEN}Starting FastAPI backend on http://localhost:8000...${NC}"
 cd backend
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating Python virtual environment...${NC}"
-    python3 -m venv venv
-fi
-source venv/bin/activate
-pip install -q -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 cd ..
 

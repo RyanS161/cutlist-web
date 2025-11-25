@@ -1,10 +1,14 @@
 """FastAPI backend for Gemini chat application."""
 
-from fastapi import FastAPI, Request
+import io
+import traceback
+from contextlib import redirect_stdout, redirect_stderr
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette import EventSourceResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from .services.gemini_service import get_gemini_service
 from .config import get_settings
@@ -44,6 +48,19 @@ class ChatRequest(BaseModel):
     current_code: Optional[str] = None
 
 
+class ExecuteCodeRequest(BaseModel):
+    """Request body for code execution endpoint."""
+    code: str
+
+
+class ExecuteCodeResponse(BaseModel):
+    """Response from code execution."""
+    success: bool
+    output: str
+    error: Optional[str] = None
+    result: Optional[Any] = None
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -54,6 +71,85 @@ async def health_check():
 async def get_system_prompt():
     """Get the default system prompt."""
     return {"system_prompt": get_settings().system_prompt}
+
+
+@app.post("/api/execute", response_model=ExecuteCodeResponse)
+async def execute_code(request: ExecuteCodeRequest):
+    """Execute Python code and return the result.
+    
+    Executes the code in a restricted environment and captures
+    stdout, stderr, and the final expression result.
+    """
+    code = request.code
+    
+    # Capture stdout and stderr
+    stdout_capture = io.StringIO()
+    stderr_capture = io.StringIO()
+    
+    # Create a restricted globals dict for execution
+    # Include common safe modules
+    exec_globals = {
+        "__builtins__": __builtins__,
+        "math": __import__("math"),
+        "json": __import__("json"),
+    }
+    
+    # Try to import cadquery if available
+    try:
+        import cadquery as cq
+        exec_globals["cq"] = cq
+        exec_globals["cadquery"] = cq
+    except ImportError:
+        pass
+    
+    exec_locals = {}
+    result = None
+    
+    try:
+        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+            # Execute the code
+            exec(code, exec_globals, exec_locals)
+            
+            # Try to get a meaningful result
+            # Look for common result variables
+            for var_name in ["result", "output", "parts", "model", "assembly"]:
+                if var_name in exec_locals:
+                    result = exec_locals[var_name]
+                    break
+        
+        output = stdout_capture.getvalue()
+        error_output = stderr_capture.getvalue()
+        
+        # Convert result to string representation if it exists
+        result_str = None
+        if result is not None:
+            try:
+                result_str = repr(result)
+                # Truncate very long results
+                if len(result_str) > 5000:
+                    result_str = result_str[:5000] + "... (truncated)"
+            except Exception:
+                result_str = "<unable to represent result>"
+        
+        return ExecuteCodeResponse(
+            success=True,
+            output=output + error_output,
+            result=result_str
+        )
+        
+    except SyntaxError as e:
+        return ExecuteCodeResponse(
+            success=False,
+            output=stdout_capture.getvalue(),
+            error=f"SyntaxError: {e.msg} (line {e.lineno})"
+        )
+    except Exception:
+        error_msg = traceback.format_exc()
+        return ExecuteCodeResponse(
+            success=False,
+            output=stdout_capture.getvalue(),
+            error=error_msg
+        )
 
 
 @app.post("/api/chat/stream")
