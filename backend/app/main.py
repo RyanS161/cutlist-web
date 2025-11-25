@@ -1,15 +1,18 @@
 """FastAPI backend for Gemini chat application."""
 
 import io
+import uuid
 import traceback
 import logging
+from pathlib import Path
 from contextlib import redirect_stdout, redirect_stderr, asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sse_starlette import EventSourceResponse
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional
 
 from .services.gemini_service import get_gemini_service
 from .config import get_settings
@@ -18,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Global cache for pre-imported modules
 _cached_modules: dict = {}
+
+# Directory for STL files
+STL_DIR = Path(__file__).parent.parent / "stl_files"
+STL_DIR.mkdir(exist_ok=True)
 
 
 @asynccontextmanager
@@ -91,7 +98,8 @@ class ExecuteCodeResponse(BaseModel):
     success: bool
     output: str
     error: Optional[str] = None
-    result: Optional[Any] = None
+    result: Optional[str] = None
+    stl_url: Optional[str] = None
 
 
 @app.get("/api/health")
@@ -106,12 +114,69 @@ async def get_system_prompt():
     return {"system_prompt": get_settings().system_prompt}
 
 
+@app.get("/api/stl/{filename}")
+async def get_stl_file(filename: str):
+    """Serve an STL file."""
+    file_path = STL_DIR / filename
+    if not file_path.exists() or not filename.endswith('.stl'):
+        raise HTTPException(status_code=404, detail="STL file not found")
+    return FileResponse(
+        file_path,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )
+
+
+def _try_export_stl(result) -> Optional[str]:
+    """Try to export a CadQuery object to STL file.
+    
+    Returns the URL to access the STL file, or None if not a CadQuery object.
+    """
+    cq = _cached_modules.get("cq")
+    if cq is None:
+        return None
+    
+    # Check if result is a CadQuery Workplane or Assembly
+    exportable = None
+    
+    if hasattr(result, 'val') and callable(result.val):
+        # It's a Workplane - get the solid
+        try:
+            exportable = result
+        except Exception:
+            pass
+    elif hasattr(result, 'toCompound'):
+        # It's an Assembly
+        try:
+            exportable = result.toCompound()
+        except Exception:
+            pass
+    
+    if exportable is None:
+        return None
+    
+    try:
+        # Generate unique filename
+        filename = f"model_{uuid.uuid4().hex[:8]}.stl"
+        file_path = STL_DIR / filename
+        
+        # Export to STL
+        cq.exporters.export(exportable, str(file_path))
+        
+        logger.info(f"Exported STL to {file_path}")
+        return f"/api/stl/{filename}"
+    except Exception as e:
+        logger.error(f"Failed to export STL: {e}")
+        return None
+
+
 @app.post("/api/execute", response_model=ExecuteCodeResponse)
 async def execute_code(request: ExecuteCodeRequest):
     """Execute Python code and return the result.
     
     Executes the code in a restricted environment and captures
     stdout, stderr, and the final expression result.
+    If the result is a CadQuery object, exports it as STL.
     """
     code = request.code
     
@@ -143,21 +208,29 @@ async def execute_code(request: ExecuteCodeRequest):
         output = stdout_capture.getvalue()
         error_output = stderr_capture.getvalue()
         
-        # Convert result to string representation if it exists
+        # Try to export result as STL if it's a CadQuery object
+        stl_url = None
         result_str = None
+        
         if result is not None:
-            try:
-                result_str = repr(result)
-                # Truncate very long results
-                if len(result_str) > 5000:
-                    result_str = result_str[:5000] + "... (truncated)"
-            except Exception:
-                result_str = "<unable to represent result>"
+            stl_url = _try_export_stl(result)
+            
+            if stl_url:
+                result_str = "CadQuery model exported to STL"
+            else:
+                try:
+                    result_str = repr(result)
+                    # Truncate very long results
+                    if len(result_str) > 5000:
+                        result_str = result_str[:5000] + "... (truncated)"
+                except Exception:
+                    result_str = "<unable to represent result>"
         
         return ExecuteCodeResponse(
             success=True,
             output=output + error_output,
-            result=result_str
+            result=result_str,
+            stl_url=stl_url,
         )
         
     except SyntaxError as e:

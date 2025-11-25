@@ -1,8 +1,103 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
 import 'highlight.js/styles/github-dark.css';
 import './CodePanel.css';
+import { Canvas, useThree } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import * as THREE from 'three';
+
+// STL Model component that loads and displays the model
+function StlModel({ url }: { url: string }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const { camera } = useThree();
+
+  useEffect(() => {
+    const loader = new STLLoader();
+    loader.load(url, (geo) => {
+      geo.computeVertexNormals();
+      geo.center();
+      setGeometry(geo);
+
+      // Auto-fit camera to model
+      geo.computeBoundingBox();
+      if (geo.boundingBox) {
+        const box = geo.boundingBox;
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const distance = maxDim * 2.5;
+        
+        camera.position.set(distance, distance, distance);
+        camera.lookAt(0, 0, 0);
+        
+        // Adjust clipping planes based on model size
+        if (camera instanceof THREE.PerspectiveCamera) {
+          camera.near = maxDim * 0.01;
+          camera.far = maxDim * 100;
+          camera.updateProjectionMatrix();
+        }
+      }
+    });
+  }, [url, camera]);
+
+  if (!geometry) {
+    return null;
+  }
+
+  return (
+    <mesh ref={meshRef} geometry={geometry}>
+      <meshStandardMaterial 
+        color="#e94560" 
+        roughness={0.4} 
+        metalness={0.3}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
+// Wrapper component with error handling for the STL viewer
+function StlViewer({ url }: { url: string }) {
+  const [error, setError] = useState<string | null>(null);
+
+  if (error) {
+    return (
+      <div className="stl-error">
+        <p>Failed to load 3D model</p>
+        <p className="stl-error-detail">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <Canvas
+      camera={{ position: [100, 100, 100], fov: 50, near: 0.1, far: 10000 }}
+      style={{ height: '300px', background: '#1a1a2e' }}
+      onError={() => setError('Failed to initialize 3D viewer')}
+    >
+      <ambientLight intensity={0.6} />
+      <directionalLight position={[10, 10, 10]} intensity={1} />
+      <directionalLight position={[-10, -10, -10]} intensity={0.5} />
+      <directionalLight position={[0, 10, 0]} intensity={0.3} />
+      <ErrorBoundary3D>
+        <StlModel url={url} />
+      </ErrorBoundary3D>
+      <OrbitControls enableDamping dampingFactor={0.1} />
+    </Canvas>
+  );
+}
+
+// Simple error boundary for 3D content (placeholder for future enhancement)
+function ErrorBoundary3D({ 
+  children, 
+}: { 
+  children: React.ReactNode; 
+}) {
+  return <>{children}</>;
+}
 
 // Register Python language
 hljs.registerLanguage('python', python);
@@ -14,6 +109,7 @@ export interface ExecutionResult {
   output?: string;
   error?: string;
   result?: string;
+  stlUrl?: string;
 }
 
 interface CodePanelProps {
@@ -120,7 +216,8 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
     executionResult.status === 'running' ||
     executionResult.error ||
     executionResult.output ||
-    executionResult.result
+    executionResult.result ||
+    executionResult.stlUrl
   );
 
   return (
@@ -204,13 +301,13 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
         
         {/* Output Panel - Always visible when there's output */}
         {hasOutput && (
-          <div className={`output-panel ${executionResult?.status === 'error' ? 'has-error' : ''}`}>
+          <div className={`output-panel ${executionResult?.status === 'error' ? 'has-error' : ''} ${executionResult?.stlUrl ? 'has-stl' : ''}`}>
             <div className="output-panel-header">
               <div className="output-panel-title">
                 {executionResult?.status === 'error' && <span className="output-icon error">⚠</span>}
                 {executionResult?.status === 'success' && <span className="output-icon success">✓</span>}
                 {executionResult?.status === 'running' && <span className="output-icon running">⟳</span>}
-                <span>Output</span>
+                <span>{executionResult?.stlUrl ? '3D Preview' : 'Output'}</span>
               </div>
               {executionResult?.status !== 'running' && (
                 <button onClick={() => setShowOutput(!showOutput)} className="toggle-output-btn">
@@ -218,7 +315,7 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
                 </button>
               )}
             </div>
-            {(showOutput || executionResult?.status === 'running' || executionResult?.status === 'error') && (
+            {(showOutput || executionResult?.status === 'running' || executionResult?.status === 'error' || executionResult?.stlUrl) && (
               <div className="output-panel-content">
                 {executionResult?.status === 'running' ? (
                   <div className="output-running">
@@ -229,16 +326,22 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
                   <pre className="output-error">{executionResult.error}</pre>
                 ) : (
                   <>
+                    {/* STL 3D Viewer */}
+                    {executionResult?.stlUrl && (
+                      <div className="stl-viewer-container">
+                        <StlViewer url={executionResult.stlUrl} />
+                      </div>
+                    )}
                     {executionResult?.output && (
                       <pre className="output-stdout">{executionResult.output}</pre>
                     )}
-                    {executionResult?.result && (
+                    {executionResult?.result && !executionResult?.stlUrl && (
                       <div className="output-result">
                         <span className="result-label">Result:</span>
                         <pre>{executionResult.result}</pre>
                       </div>
                     )}
-                    {!executionResult?.output && !executionResult?.result && (
+                    {!executionResult?.output && !executionResult?.result && !executionResult?.stlUrl && (
                       <p className="output-empty">Code executed successfully with no output</p>
                     )}
                   </>

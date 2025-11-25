@@ -31,6 +31,7 @@ export function ChatWindow() {
         output: result.output,
         error: result.error,
         result: result.result,
+        stlUrl: result.stl_url,
       });
     } catch (err) {
       setExecutionResult({

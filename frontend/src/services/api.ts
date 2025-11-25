@@ -117,6 +117,7 @@ export interface ExecuteCodeResult {
   output: string;
   error?: string;
   result?: string;
+  stl_url?: string;
 }
 
 /**
