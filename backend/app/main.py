@@ -41,6 +41,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[Message]] = None
     system_prompt: Optional[str] = None
+    current_code: Optional[str] = None
 
 
 @app.get("/api/health")
@@ -69,12 +70,17 @@ async def chat_stream(request: ChatRequest):
     if request.history:
         history = [{"role": msg.role, "content": msg.content} for msg in request.history]
     
+    # Prepare message with current code context if available
+    message_with_context = request.message
+    if request.current_code:
+        message_with_context = f"[CURRENT_CODE]\n```python\n{request.current_code}\n```\n[END_CURRENT_CODE]\n\n{request.message}"
+    
     # Use custom system prompt if provided, otherwise use default
     system_prompt = request.system_prompt
     
     async def generate():
         """Generate SSE events from Gemini stream."""
-        async for chunk in gemini.stream_chat(request.message, history, system_prompt):
+        async for chunk in gemini.stream_chat(message_with_context, history, system_prompt):
             # SSE format: yield dict with 'data' key
             yield {"data": chunk}
     

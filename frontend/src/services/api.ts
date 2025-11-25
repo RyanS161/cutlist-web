@@ -13,6 +13,7 @@ export interface ChatStreamOptions {
   message: string;
   history: Message[];
   systemPrompt?: string;
+  currentCode?: string;
   onChunk: (chunk: string) => void;
   onError: (error: Error) => void;
   onComplete: () => void;
@@ -26,6 +27,7 @@ export async function streamChat({
   message,
   history,
   systemPrompt,
+  currentCode,
   onChunk,
   onError,
   onComplete,
@@ -36,7 +38,12 @@ export async function streamChat({
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message, history, system_prompt: systemPrompt }),
+      body: JSON.stringify({ 
+        message, 
+        history, 
+        system_prompt: systemPrompt,
+        current_code: currentCode,
+      }),
     });
 
     if (!response.ok) {
@@ -49,18 +56,38 @@ export async function streamChat({
     }
 
     const decoder = new TextDecoder();
+    let buffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const text = decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
       
-      // Parse SSE format: "data: <content>\n\n"
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const content = line.slice(6); // Remove "data: " prefix
+      // SSE messages are separated by double newlines
+      // Each message can have multiple "data:" lines that should be joined with newlines
+      const messages = buffer.split(/\r?\n\r?\n/);
+      
+      // Keep the last incomplete message in the buffer
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim()) continue;
+        
+        // Collect all data lines in this message and join them with newlines
+        const dataLines: string[] = [];
+        const lines = message.split(/\r?\n/);
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            dataLines.push(line.slice(6)); // Remove "data: " prefix
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5)); // Handle "data:" without space (empty line)
+          }
+        }
+        
+        if (dataLines.length > 0) {
+          const content = dataLines.join('\n');
           if (content && content !== '[DONE]') {
             onChunk(content);
           }

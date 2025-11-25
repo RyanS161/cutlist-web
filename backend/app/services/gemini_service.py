@@ -1,10 +1,15 @@
 """Gemini API service for streaming chat responses."""
 
+import logging
 from typing import AsyncGenerator, List, Dict, Any
 from google import genai
 from google.genai import types
 
 from ..config import get_settings
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class GeminiService:
@@ -85,6 +90,9 @@ class GeminiService:
                 )
             ):
                 if chunk.text:
+                    # Log raw chunk for debugging
+                    logger.debug(f"GEMINI RAW CHUNK: {repr(chunk.text)}")
+                    print(f"[GEMINI RAW]: {repr(chunk.text)}", flush=True)
                     yield chunk.text
         except Exception as e:
             yield f"\n\n[Error: {str(e)}]"

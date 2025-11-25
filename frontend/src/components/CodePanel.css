@@ -1,0 +1,208 @@
+.code-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  flex: 1;
+  min-width: 400px;
+  background: #1e1e2e;
+  border-left: 1px solid #0f3460;
+}
+
+.code-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+.code-panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #e94560;
+  font-weight: 600;
+}
+
+.code-panel-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.code-btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.code-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.edit-btn {
+  background: transparent;
+  color: #94a3b8;
+  border-color: #94a3b8;
+}
+
+.edit-btn:hover:not(:disabled) {
+  background: #94a3b8;
+  color: #1a1a2e;
+}
+
+.copy-btn {
+  background: transparent;
+  color: #64748b;
+  border-color: #64748b;
+}
+
+.copy-btn:hover:not(:disabled) {
+  background: #64748b;
+  color: #1a1a2e;
+}
+
+.save-btn {
+  background: #22c55e;
+  color: white;
+  border-color: #22c55e;
+}
+
+.save-btn:hover {
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
+.cancel-btn {
+  background: transparent;
+  color: #94a3b8;
+  border-color: #94a3b8;
+}
+
+.cancel-btn:hover {
+  background: #94a3b8;
+  color: #1a1a2e;
+}
+
+.code-panel-content {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.code-editor-container {
+  position: relative;
+  min-height: 100%;
+}
+
+.code-display {
+  margin: 0;
+  padding: 1rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.code-display code {
+  font-family: inherit;
+}
+
+.code-editor-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: 1rem;
+  background: transparent;
+  color: transparent;
+  caret-color: #e94560;
+  border: none;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+}
+
+.code-editor-overlay:focus {
+  outline: none;
+}
+
+.code-editor-overlay::selection {
+  background: rgba(233, 69, 96, 0.3);
+}
+
+.code-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+}
+
+.code-empty p {
+  margin: 0;
+  color: #64748b;
+}
+
+.code-hint {
+  margin-top: 0.5rem !important;
+  font-size: 0.875rem;
+}
+
+.code-streaming-indicator {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(22, 33, 62, 0.9);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #e94560;
+}
+
+.streaming-dot {
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.3; }
+}
+
+/* Override highlight.js theme background to match our panel */
+.code-display code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* Scrollbar styling */
+.code-panel-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.code-panel-content::-webkit-scrollbar-track {
+  background: #1e1e2e;
+}
+
+.code-panel-content::-webkit-scrollbar-thumb {
+  background: #0f3460;
+  border-radius: 4px;
+}
+
+.code-panel-content::-webkit-scrollbar-thumb:hover {
+  background: #e94560;
+}

@@ -1,11 +1,26 @@
+/* App container for split layout */
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background: #1a1a2e;
+}
+
 .chat-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 900px;
-  margin: 0 auto;
+  flex: 1;
+  min-width: 400px;
+  max-width: 600px;
   background: #1a1a2e;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+/* When chat hasn't started, center the container */
+.app-container:not(:has(.code-panel)) .chat-container {
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .chat-header {
