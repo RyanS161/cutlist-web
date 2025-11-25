@@ -1,0 +1,19 @@
+{
+  "name": "cutlist-web-test",
+  "version": "1.0.0",
+  "description": "React + FastAPI chat application with Google Gemini",
+  "private": true,
+  "scripts": {
+    "dev": "./dev.sh",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && source venv/bin/activate && uvicorn app.main:app --reload",
+    "build": "cd frontend && npm run build",
+    "preview": "cd frontend && npm run preview",
+    "deploy:frontend": "npm run build && firebase deploy --only hosting",
+    "deploy:backend": "cd backend && gcloud run deploy gemini-chat-api --source . --region us-central1 --allow-unauthenticated",
+    "deploy": "npm run deploy:backend && npm run deploy:frontend"
+  },
+  "keywords": ["react", "fastapi", "gemini", "chat", "firebase"],
+  "author": "",
+  "license": "MIT"
+}
