@@ -44,6 +44,70 @@
   cursor: not-allowed;
 }
 
+/* System Prompt Editor */
+.system-prompt-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.system-prompt-header {
+  margin-bottom: 1rem;
+}
+
+.system-prompt-header h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  color: #e94560;
+}
+
+.system-prompt-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.system-prompt-input {
+  flex: 1;
+  min-height: 200px;
+  padding: 1rem;
+  background: #16213e;
+  color: #e2e8f0;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  line-height: 1.6;
+  resize: none;
+}
+
+.system-prompt-input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.system-prompt-input::placeholder {
+  color: #64748b;
+}
+
+.system-prompt-input:disabled {
+  opacity: 0.6;
+}
+
+.system-prompt-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+.char-count {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;

@@ -1,25 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../hooks/useChat';
+import { getDefaultSystemPrompt } from '../services/api';
 import './ChatWindow.css';
 
 /**
  * Chat window component with message display and input.
  */
 export function ChatWindow() {
-  const { messages, isStreaming, error, sendMessage, clearChat } = useChat();
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [isLoadingPrompt, setIsLoadingPrompt] = useState(true);
+  const { messages, isStreaming, error, sendMessage, clearChat, chatStarted } = useChat({ systemPrompt });
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load default system prompt on mount
+  useEffect(() => {
+    getDefaultSystemPrompt()
+      .then(setSystemPrompt)
+      .catch((err) => console.error('Failed to load system prompt:', err))
+      .finally(() => setIsLoadingPrompt(false));
+  }, []);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Focus input on mount
+  // Focus input on mount or when chat starts
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (chatStarted) {
+      inputRef.current?.focus();
+    }
+  }, [chatStarted]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,26 +51,53 @@ export function ChatWindow() {
     }
   };
 
+  const handleClearChat = () => {
+    clearChat();
+    // Reload default system prompt
+    setIsLoadingPrompt(true);
+    getDefaultSystemPrompt()
+      .then(setSystemPrompt)
+      .catch((err) => console.error('Failed to load system prompt:', err))
+      .finally(() => setIsLoadingPrompt(false));
+  };
+
   return (
     <div className="chat-container">
       <div className="chat-header">
         <h1>Gemini Chat</h1>
         <button 
-          onClick={clearChat} 
+          onClick={handleClearChat} 
           className="clear-btn"
-          disabled={isStreaming || messages.length === 0}
+          disabled={isStreaming || (!chatStarted && messages.length === 0)}
         >
-          Clear Chat
+          {chatStarted ? 'New Chat' : 'Reset'}
         </button>
       </div>
 
-      <div className="messages-container">
-        {messages.length === 0 ? (
-          <div className="empty-state">
-            <p>Start a conversation with Gemini AI</p>
+      {!chatStarted ? (
+        <div className="system-prompt-container">
+          <div className="system-prompt-header">
+            <h2>System Prompt</h2>
+            <p className="system-prompt-hint">
+              Customize the AI's behavior and personality before starting the chat.
+              This cannot be changed once the conversation begins.
+            </p>
           </div>
-        ) : (
-          messages.map((message, index) => (
+          <textarea
+            className="system-prompt-input"
+            value={systemPrompt}
+            onChange={(e) => setSystemPrompt(e.target.value)}
+            placeholder={isLoadingPrompt ? 'Loading default prompt...' : 'Enter system prompt...'}
+            disabled={isLoadingPrompt}
+            rows={8}
+          />
+          <div className="system-prompt-footer">
+            <span className="char-count">{systemPrompt.length} characters</span>
+          </div>
+        </div>
+      ) : (
+        <div className="messages-container">
+          {messages.map((message, index) => (
             <div
               key={index}
               className={`message ${message.role === 'user' ? 'user-message' : 'model-message'}`}
@@ -71,10 +111,10 @@ export function ChatWindow() {
                 ) : null)}
               </div>
             </div>
-          ))
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+      )}
 
       {error && (
         <div className="error-banner">
@@ -89,17 +129,20 @@ export function ChatWindow() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
-          disabled={isStreaming}
+          placeholder={chatStarted 
+            ? "Type a message... (Enter to send, Shift+Enter for new line)"
+            : "Type your first message to start the chat..."
+          }
+          disabled={isStreaming || isLoadingPrompt}
           rows={1}
           className="message-input"
         />
         <button 
           type="submit" 
-          disabled={!input.trim() || isStreaming}
+          disabled={!input.trim() || isStreaming || isLoadingPrompt}
           className="send-btn"
         >
-          {isStreaming ? 'Sending...' : 'Send'}
+          {isStreaming ? 'Sending...' : chatStarted ? 'Send' : 'Start Chat'}
         </button>
       </form>
     </div>

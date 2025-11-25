@@ -40,12 +40,19 @@ class ChatRequest(BaseModel):
     """Request body for chat endpoint."""
     message: str
     history: Optional[List[Message]] = None
+    system_prompt: Optional[str] = None
 
 
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "model": get_settings().gemini_model}
+
+
+@app.get("/api/system-prompt")
+async def get_system_prompt():
+    """Get the default system prompt."""
+    return {"system_prompt": get_settings().system_prompt}
 
 
 @app.post("/api/chat/stream")
@@ -62,9 +69,12 @@ async def chat_stream(request: ChatRequest):
     if request.history:
         history = [{"role": msg.role, "content": msg.content} for msg in request.history]
     
+    # Use custom system prompt if provided, otherwise use default
+    system_prompt = request.system_prompt
+    
     async def generate():
         """Generate SSE events from Gemini stream."""
-        async for chunk in gemini.stream_chat(request.message, history):
+        async for chunk in gemini.stream_chat(request.message, history, system_prompt):
             # SSE format: yield dict with 'data' key
             yield {"data": chunk}
     

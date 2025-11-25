@@ -12,6 +12,7 @@ export interface Message {
 export interface ChatStreamOptions {
   message: string;
   history: Message[];
+  systemPrompt?: string;
   onChunk: (chunk: string) => void;
   onError: (error: Error) => void;
   onComplete: () => void;
@@ -24,6 +25,7 @@ export interface ChatStreamOptions {
 export async function streamChat({
   message,
   history,
+  systemPrompt,
   onChunk,
   onError,
   onComplete,
@@ -34,7 +36,7 @@ export async function streamChat({
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, history, system_prompt: systemPrompt }),
     });
 
     if (!response.ok) {
@@ -81,4 +83,16 @@ export async function checkHealth(): Promise<{ status: string; model: string }> 
     throw new Error(`Health check failed: ${response.status}`);
   }
   return response.json();
+}
+
+/**
+ * Get the default system prompt from the backend.
+ */
+export async function getDefaultSystemPrompt(): Promise<string> {
+  const response = await fetch(`${API_BASE}/system-prompt`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch system prompt: ${response.status}`);
+  }
+  const data = await response.json();
+  return data.system_prompt;
 }

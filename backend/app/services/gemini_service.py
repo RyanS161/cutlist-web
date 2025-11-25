@@ -54,13 +54,15 @@ class GeminiService:
     async def stream_chat(
         self, 
         message: str, 
-        history: List[Dict[str, str]] = None
+        history: List[Dict[str, str]] = None,
+        system_prompt: str = None
     ) -> AsyncGenerator[str, None]:
         """Stream a chat response from Gemini.
         
         Args:
             message: The user's message
             history: Optional conversation history
+            system_prompt: Optional custom system prompt (uses default if not provided)
             
         Yields:
             Text chunks from the Gemini response
@@ -70,12 +72,15 @@ class GeminiService:
         
         contents = self._build_contents(message, history)
         
+        # Use provided system prompt or fall back to default
+        prompt_to_use = system_prompt if system_prompt is not None else self.system_prompt
+        
         try:
             async for chunk in await self.client.aio.models.generate_content_stream(
                 model=self.model,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=self.system_prompt,
+                    system_instruction=prompt_to_use,
                     temperature=0.7,
                 )
             ):
