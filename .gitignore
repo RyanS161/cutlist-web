@@ -37,3 +37,7 @@ npm-debug.log*
 coverage/
 .coverage
 htmlcov/
+
+# Other outputs
+backend/stl_files/
+backend/model_images/

@@ -118,6 +118,7 @@ export interface ExecuteCodeResult {
   error?: string;
   result?: string;
   stl_url?: string;
+  views_url?: string;
 }
 
 /**

@@ -26,6 +26,10 @@ _cached_modules: dict = {}
 STL_DIR = Path(__file__).parent.parent / "stl_files"
 STL_DIR.mkdir(exist_ok=True)
 
+# Directory for SVG files
+SVG_DIR = Path(__file__).parent.parent / "model_images"
+SVG_DIR.mkdir(exist_ok=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -100,6 +104,7 @@ class ExecuteCodeResponse(BaseModel):
     error: Optional[str] = None
     result: Optional[str] = None
     stl_url: Optional[str] = None
+    views_url: Optional[str] = None
 
 
 @app.get("/api/health")
@@ -127,7 +132,139 @@ async def get_stl_file(filename: str):
     )
 
 
-def _try_export_stl(result) -> Optional[str]:
+@app.get("/api/svg/{filename}")
+async def get_svg_file(filename: str):
+    """Serve an SVG file."""
+    file_path = SVG_DIR / filename
+    if not file_path.exists() or not filename.endswith('.svg'):
+        raise HTTPException(status_code=404, detail="SVG file not found")
+    return FileResponse(
+        file_path,
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )
+
+
+@app.get("/api/img/{filename}")
+async def get_image_file(filename: str):
+    """Serve a rendered PNG image."""
+    file_path = SVG_DIR / filename  # Reusing SVG_DIR for images
+    if not file_path.exists() or not filename.endswith('.png'):
+        raise HTTPException(status_code=404, detail="Image file not found")
+    return FileResponse(
+        file_path,
+        media_type="image/png",
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )
+
+
+def _try_render_views(result, base_id: str) -> Optional[str]:
+    """Render a combined 2x2 grid PNG image of a CadQuery object from 4 different perspective views.
+    
+    Returns the URL to access the combined PNG file, or None if not a CadQuery object.
+    """
+    try:
+        from cadquery.vis import show, style
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as e:
+        logger.warning(f"Required modules not available for rendering: {e}")
+        return None
+    
+    cq = _cached_modules.get("cq")
+    if cq is None:
+        return None
+    
+    # Check if result is a CadQuery Workplane or Assembly
+    renderable = None
+    if hasattr(result, 'val') and callable(result.val):
+        renderable = result
+    elif hasattr(result, 'toCompound'):
+        try:
+            renderable = result.toCompound()
+        except Exception:
+            pass
+    
+    if renderable is None:
+        return None
+    
+    try:
+        # Style with tan color
+        styled = style(renderable, color='tan')
+        
+        # Define 4 camera angles: (name, roll, elevation) 
+        views = [
+            ("Front", 0, 0),        # Front view
+            ("Right", -90, 0),      # Right view  
+            ("Top", 0, -90),        # Top view
+            ("Isometric", -35, -45),  # Isometric view
+        ]
+        
+        view_size = 400
+        temp_files = []
+        
+        # Render each view to a temporary file
+        for view_name, roll, elevation in views:
+            temp_filename = f"{base_id}_{view_name.lower()}_temp.png"
+            temp_path = SVG_DIR / temp_filename
+            temp_files.append((view_name, temp_path))
+            
+            # Render with perspective view
+            show(
+                styled,
+                width=view_size,
+                height=view_size,
+                screenshot=str(temp_path),
+                roll=roll,
+                elevation=elevation,
+                zoom=1.5,
+                interact=False,
+                trihedron=False,
+                bgcolor=(0.1, 0.1, 0.15),  # Dark background
+            )
+        
+        # Create combined 2x2 grid image
+        grid_size = view_size * 2
+        combined = Image.new('RGB', (grid_size, grid_size), color=(26, 26, 46))
+        
+        # Positions for 2x2 grid: top-left, top-right, bottom-left, bottom-right
+        positions = [(0, 0), (view_size, 0), (0, view_size), (view_size, view_size)]
+        
+        draw = ImageDraw.Draw(combined)
+        
+        for i, (view_name, temp_path) in enumerate(temp_files):
+            # Load and paste the view image
+            view_img = Image.open(temp_path)
+            x, y = positions[i]
+            combined.paste(view_img, (x, y))
+            
+            # Add label
+            label_y = y + 10
+            label_x = x + 10
+            # Draw text with shadow for visibility
+            draw.text((label_x + 1, label_y + 1), view_name, fill=(0, 0, 0))
+            draw.text((label_x, label_y), view_name, fill=(210, 180, 140))
+            
+            # Clean up temp file
+            view_img.close()
+            temp_path.unlink()
+        
+        # Save combined image
+        combined_filename = f"{base_id}_views.png"
+        combined_path = SVG_DIR / combined_filename
+        combined.save(combined_path, 'PNG')
+        combined.close()
+        
+        logger.info(f"Rendered combined views to {combined_path}")
+        return f"/api/img/{combined_filename}"
+        
+    except Exception as e:
+        logger.error(f"Failed to render views: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _try_export_stl(result, base_id: str = None) -> Optional[str]:
     """Try to export a CadQuery object to STL file.
     
     Returns the URL to access the STL file, or None if not a CadQuery object.
@@ -157,7 +294,9 @@ def _try_export_stl(result) -> Optional[str]:
     
     try:
         # Generate unique filename
-        filename = f"model_{uuid.uuid4().hex[:8]}.stl"
+        if base_id is None:
+            base_id = f"model_{uuid.uuid4().hex[:8]}"
+        filename = f"{base_id}.stl"
         file_path = STL_DIR / filename
         
         # Export to STL
@@ -208,15 +347,20 @@ async def execute_code(request: ExecuteCodeRequest):
         output = stdout_capture.getvalue()
         error_output = stderr_capture.getvalue()
         
-        # Try to export result as STL if it's a CadQuery object
+        # Try to export result as STL and render views if it's a CadQuery object
         stl_url = None
+        views_url = None
         result_str = None
         
         if result is not None:
-            stl_url = _try_export_stl(result)
+            # Generate a unique base ID for all exports
+            base_id = f"model_{uuid.uuid4().hex[:8]}"
+            stl_url = _try_export_stl(result, base_id)
             
             if stl_url:
                 result_str = "CadQuery model exported to STL"
+                # Also render combined PNG views from different angles
+                views_url = _try_render_views(result, base_id)
             else:
                 try:
                     result_str = repr(result)
@@ -231,6 +375,7 @@ async def execute_code(request: ExecuteCodeRequest):
             output=output + error_output,
             result=result_str,
             stl_url=stl_url,
+            views_url=views_url,
         )
         
     except SyntaxError as e:

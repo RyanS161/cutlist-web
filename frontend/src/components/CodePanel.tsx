@@ -50,7 +50,7 @@ function StlModel({ url }: { url: string }) {
   return (
     <mesh ref={meshRef} geometry={geometry}>
       <meshStandardMaterial 
-        color="#e94560" 
+        color="#D2B48C" 
         roughness={0.4} 
         metalness={0.3}
         side={THREE.DoubleSide}
@@ -110,6 +110,7 @@ export interface ExecutionResult {
   error?: string;
   result?: string;
   stlUrl?: string;
+  viewsUrl?: string;
 }
 
 interface CodePanelProps {
@@ -217,7 +218,8 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
     executionResult.error ||
     executionResult.output ||
     executionResult.result ||
-    executionResult.stlUrl
+    executionResult.stlUrl ||
+    executionResult.viewsUrl
   );
 
   return (
@@ -326,10 +328,23 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
                   <pre className="output-error">{executionResult.error}</pre>
                 ) : (
                   <>
-                    {/* STL 3D Viewer */}
+                    {/* STL 3D Viewer and rendered views side by side */}
                     {executionResult?.stlUrl && (
-                      <div className="stl-viewer-container">
-                        <StlViewer url={executionResult.stlUrl} />
+                      <div className="model-viewers-container">
+                        <div className="stl-viewer-container">
+                          <div className="viewer-label">Interactive 3D View</div>
+                          <StlViewer url={executionResult.stlUrl} />
+                        </div>
+                        {executionResult?.viewsUrl && (
+                          <div className="views-container">
+                            <div className="viewer-label">Rendered Views</div>
+                            <img 
+                              src={executionResult.viewsUrl} 
+                              alt="Model views from 4 angles" 
+                              className="combined-views-image"
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
                     {executionResult?.output && (
