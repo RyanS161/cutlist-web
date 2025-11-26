@@ -188,6 +188,15 @@
   color: #e94560;
 }
 
+/* QA Agent message styling */
+.qa-message {
+  border-left: 3px solid #e67e22;
+}
+
+.qa-message .message-role {
+  color: #e67e22;
+}
+
 .message-content {
   line-height: 1.6;
   word-wrap: break-word;

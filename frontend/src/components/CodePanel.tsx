@@ -145,7 +145,9 @@ interface CodePanelProps {
   onReviewImage?: (viewsUrl: string, code: string) => void;
   onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
   onReviewError?: (error: string, code: string) => void;
+  onQAReview?: (viewsUrl: string, testResultsSummary: string) => void;
   isReviewing?: boolean;
+  isQAReviewing?: boolean;
 }
 
 /**
@@ -160,7 +162,9 @@ export function CodePanel({
   onReviewImage,
   onReviewTestResults,
   onReviewError,
+  onQAReview,
   isReviewing = false,
+  isQAReviewing = false,
 }: CodePanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedCode, setEditedCode] = useState(code);
@@ -531,9 +535,22 @@ export function CodePanel({
           <ActionsPanel
             onReviewImage={handleReviewImage}
             onReviewTestResults={handleReviewTestResults}
+            onQAReview={() => {
+              if (executionResult?.viewsUrl && testResults && onQAReview) {
+                // Format test results summary for QA agent
+                const failedTests = testResults.tests
+                  .filter(t => t.status !== 'passed')
+                  .map(t => `- ${t.name}: ${t.message || t.status}`)
+                  .join('\n');
+                const summary = `Tests: ${testResults.passed} passed, ${testResults.failed} failed, ${testResults.errors} errors\n${failedTests ? `Failed:\n${failedTests}` : 'All tests passed.'}`;
+                onQAReview(executionResult.viewsUrl, summary);
+              }
+            }}
             canReviewImage={!!executionResult?.viewsUrl}
             canReviewTests={!!testResults}
+            canQAReview={!!executionResult?.viewsUrl && !!testResults}
             isReviewing={isReviewing}
+            isQAReviewing={isQAReviewing}
           />
         </div>
       </div>

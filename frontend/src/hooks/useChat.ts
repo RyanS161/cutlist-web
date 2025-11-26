@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import type { Message } from '../services/api';
-import { streamChat, streamReview } from '../services/api';
+import { streamChat, streamReview, streamQAReview } from '../services/api';
+
+// Extended message type to support QA agent
+export interface ExtendedMessage extends Message {
+  agentType?: 'designer' | 'qa';
+}
 
 // Code block markers (markdown style)
 const CODE_START_PATTERN = /```python\n?/;
@@ -13,12 +18,14 @@ interface UseChatOptions {
 }
 
 interface UseChatReturn {
-  messages: Message[];
+  messages: ExtendedMessage[];
   isStreaming: boolean;
   isReviewing: boolean;
+  isQAReviewing: boolean;
   error: string | null;
   sendMessage: (content: string) => Promise<void>;
   triggerReview: (viewsUrl: string, currentCode: string) => Promise<void>;
+  triggerQAReview: (viewsUrl: string, testResultsSummary: string) => Promise<void>;
   clearChat: () => void;
   chatStarted: boolean;
 }
@@ -66,14 +73,15 @@ function parseStreamContent(fullContent: string): { displayText: string; code: s
  * Custom hook for managing chat state and streaming messages.
  */
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ExtendedMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isQAReviewing, setIsQAReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chatStarted, setChatStarted] = useState(false);
   
   // Use ref to track current messages during streaming
-  const messagesRef = useRef<Message[]>([]);
+  const messagesRef = useRef<ExtendedMessage[]>([]);
   messagesRef.current = messages;
   
   // Store the system prompt for this chat session
@@ -235,13 +243,153 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     });
   }, [isStreaming, isReviewing]);
 
+  /**
+   * Trigger a QA review by sending the design to a fresh QA agent.
+   * The QA agent will analyze the image and test results, providing independent feedback.
+   * After the QA review completes, the feedback is automatically sent to the Designer Agent.
+   */
+  const triggerQAReview = useCallback(async (viewsUrl: string, testResultsSummary: string) => {
+    if (isStreaming || isReviewing || isQAReviewing) return;
+
+    setError(null);
+    setIsQAReviewing(true);
+    rawContentRef.current = '';
+
+    // Extract only user messages for context
+    const userMessages = messagesRef.current
+      .filter(msg => msg.role === 'user')
+      .map(msg => msg.content);
+
+    // Add a QA agent message to show review is in progress
+    const qaMessage: ExtendedMessage = { 
+      role: 'model', 
+      content: '🔍 **QA Agent reviewing design...**',
+      agentType: 'qa'
+    };
+    setMessages((prev) => [...prev, qaMessage]);
+
+    let qaFeedback = '';
+
+    await streamQAReview({
+      viewsUrl,
+      testResultsSummary,
+      userMessages,
+      onChunk: (chunk) => {
+        // Accumulate raw content
+        rawContentRef.current += chunk;
+        qaFeedback = rawContentRef.current.trim();
+
+        // QA agent shouldn't provide code, so just use raw content
+        const displayText = qaFeedback;
+
+        // Update the QA message with content
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (updated[lastIdx]?.role === 'model' && updated[lastIdx]?.agentType === 'qa') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: displayText,
+            };
+          }
+          return updated;
+        });
+      },
+      onError: (err) => {
+        setError(err.message);
+        setIsQAReviewing(false);
+      },
+      onComplete: async () => {
+        setIsQAReviewing(false);
+        
+        // Automatically send QA feedback to the Designer Agent
+        if (qaFeedback) {
+          // Small delay to ensure UI updates before starting designer response
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Simple prompt for the designer to act on the QA feedback
+          const designerPrompt = "Please address the QA Agent's feedback and update the code.";
+          
+          setTimeout(() => {
+            // Get current code to send with the message
+            let currentCode = getCurrentCodeRef.current?.();
+            if (currentCode) {
+              currentCode = currentCode
+                .replace(/<[^>]*>/g, '')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"');
+            }
+
+            // Build history including the QA agent message with qa_agent role
+            // The backend will convert qa_agent messages appropriately
+            const historyWithQA = [
+              ...messagesRef.current.filter(m => m.role !== 'model' || m.agentType !== 'qa').map(m => ({
+                role: m.role as 'user' | 'model' | 'qa_agent',
+                content: m.content
+              })),
+              { role: 'qa_agent' as const, content: qaFeedback }
+            ];
+            
+            // Add placeholder for assistant response (no user message shown)
+            const assistantMessage: ExtendedMessage = { role: 'model', content: '' };
+            setMessages((prev) => [...prev, assistantMessage]);
+            
+            setIsStreaming(true);
+            rawContentRef.current = '';
+
+            streamChat({
+              message: designerPrompt,
+              history: historyWithQA,
+              systemPrompt: systemPromptRef.current,
+              currentCode,
+              onChunk: (chunk) => {
+                rawContentRef.current += chunk;
+                const { displayText, code } = parseStreamContent(rawContentRef.current);
+                
+                if (code !== null && onCodeUpdateRef.current) {
+                  const cleanCode = code
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&quot;/g, '"');
+                  onCodeUpdateRef.current(cleanCode);
+                }
+                
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const lastIdx = updated.length - 1;
+                  if (updated[lastIdx]?.role === 'model' && !updated[lastIdx]?.agentType) {
+                    updated[lastIdx] = { ...updated[lastIdx], content: displayText };
+                  }
+                  return updated;
+                });
+              },
+              onError: (err) => {
+                setError(err.message);
+                setIsStreaming(false);
+              },
+              onComplete: () => {
+                setIsStreaming(false);
+              },
+            });
+          }, 100);
+        }
+      },
+    });
+  }, [isStreaming, isReviewing, isQAReviewing]);
+
   return {
     messages,
     isStreaming,
     isReviewing,
+    isQAReviewing,
     error,
     sendMessage,
     triggerReview,
+    triggerQAReview,
     clearChat,
     chatStarted,
   };

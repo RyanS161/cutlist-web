@@ -3,9 +3,12 @@ import './ActionsPanel.css';
 interface ActionsPanelProps {
   onReviewImage: () => void;
   onReviewTestResults: () => void;
+  onQAReview: () => void;
   canReviewImage: boolean;
   canReviewTests: boolean;
+  canQAReview: boolean;
   isReviewing: boolean;
+  isQAReviewing: boolean;
 }
 
 /**
@@ -14,10 +17,15 @@ interface ActionsPanelProps {
 export function ActionsPanel({
   onReviewImage,
   onReviewTestResults,
+  onQAReview,
   canReviewImage,
   canReviewTests,
+  canQAReview,
   isReviewing,
+  isQAReviewing,
 }: ActionsPanelProps) {
+  const isAnyReviewing = isReviewing || isQAReviewing;
+  
   return (
     <div className="actions-panel">
       <div className="actions-panel-header">
@@ -25,8 +33,16 @@ export function ActionsPanel({
       </div>
       <div className="actions-panel-content">
         <button
+          onClick={onQAReview}
+          disabled={!canQAReview || isAnyReviewing}
+          className="action-btn qa-review-btn"
+        >
+          <span className="action-icon">🤖</span>
+          <span className="action-text">Trigger QA Agent Review</span>
+        </button>
+        <button
           onClick={onReviewImage}
-          disabled={!canReviewImage || isReviewing}
+          disabled={!canReviewImage || isAnyReviewing}
           className="action-btn review-image-btn"
         >
           <span className="action-icon">🔍</span>
@@ -34,16 +50,16 @@ export function ActionsPanel({
         </button>
         <button
           onClick={onReviewTestResults}
-          disabled={!canReviewTests || isReviewing}
+          disabled={!canReviewTests || isAnyReviewing}
           className="action-btn review-tests-btn"
         >
           <span className="action-icon">📋</span>
           <span className="action-text">Send Test Results to Agent for Review</span>
         </button>
-        {isReviewing && (
+        {isAnyReviewing && (
           <div className="reviewing-indicator">
             <span className="reviewing-spinner">⟳</span>
-            <span>Reviewing...</span>
+            <span>{isQAReviewing ? 'QA Agent reviewing...' : 'Reviewing...'}</span>
           </div>
         )}
       </div>

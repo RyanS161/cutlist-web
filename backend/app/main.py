@@ -122,6 +122,13 @@ class TestCodeRequest(BaseModel):
     code: str
 
 
+class QAReviewRequest(BaseModel):
+    """Request body for QA agent review endpoint."""
+    views_url: str
+    test_results_summary: str
+    user_messages: List[str]
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -631,6 +638,44 @@ async def review_design_stream(request: ReviewDesignRequest):
             current_code=request.current_code,
             history=history,
             system_prompt=system_prompt
+        ):
+            yield {"data": chunk}
+    
+    return EventSourceResponse(generate())
+
+
+@app.post("/api/qa-review/stream")
+async def qa_review_stream(request: QAReviewRequest):
+    """Stream a QA review response from a fresh Gemini agent.
+    
+    Takes the design image, test results, and user messages,
+    returns a QA assessment as Server-Sent Events stream.
+    
+    This creates a new agent instance each time (no conversation history).
+    """
+    gemini = get_gemini_service()
+    settings = get_settings()
+    
+    # Extract filename from URL and load image
+    filename = request.views_url.split('/')[-1]
+    image_path = SVG_DIR / filename
+    
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Views image not found")
+    
+    # Read image data
+    image_data = image_path.read_bytes()
+    
+    # Get QA-specific system prompt
+    qa_system_prompt = settings.qa_system_prompt
+    
+    async def generate():
+        """Generate SSE events from Gemini stream."""
+        async for chunk in gemini.stream_qa_review(
+            image_data=image_data,
+            test_results_summary=request.test_results_summary,
+            user_messages=request.user_messages,
+            system_prompt=qa_system_prompt
         ):
             yield {"data": chunk}
     

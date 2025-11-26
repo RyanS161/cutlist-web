@@ -30,7 +30,9 @@ class GeminiService:
         
         Args:
             message: The current user message
-            history: List of previous messages with 'role' and 'content' keys
+            history: List of previous messages with 'role' and 'content' keys.
+                     Supports 'user', 'model', and 'qa_agent' roles.
+                     'qa_agent' messages are converted to user messages with special formatting.
             
         Returns:
             List of Gemini Content objects
@@ -39,12 +41,30 @@ class GeminiService:
         
         # Add history
         for msg in history:
-            contents.append(
-                types.Content(
-                    role=msg["role"],
-                    parts=[types.Part.from_text(text=msg["content"])]
+            role = msg["role"]
+            content = msg["content"]
+            
+            # Handle QA agent messages - convert to user message with QA prefix
+            if role == "qa_agent":
+                qa_content = f"""[QA AGENT REVIEW]
+The QA Agent has independently reviewed the design and provided the following feedback. Please address any issues and update the code accordingly:
+
+{content}
+
+[END QA AGENT REVIEW]"""
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=qa_content)]
+                    )
                 )
-            )
+            else:
+                contents.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part.from_text(text=content)]
+                    )
+                )
         
         # Add current message
         contents.append(
@@ -165,6 +185,68 @@ Keep your response brief - either confirm the design is good, or provide the cor
             ):
                 if chunk.text:
                     # logger.debug(f"GEMINI REVIEW CHUNK: {repr(chunk.text)}")
+                    yield chunk.text
+        except Exception as e:
+            yield f"\n\n[Error: {str(e)}]"
+
+    async def stream_qa_review(
+        self,
+        image_data: bytes,
+        test_results_summary: str,
+        user_messages: List[str],
+        system_prompt: str
+    ) -> AsyncGenerator[str, None]:
+        """Stream a QA review response from a fresh Gemini instance.
+        
+        This creates a new conversation context each time (no history),
+        providing an independent QA assessment.
+        
+        Args:
+            image_data: PNG image bytes of the rendered design
+            test_results_summary: Summarized test results text
+            user_messages: List of user messages from the conversation
+            system_prompt: The QA-specific system prompt
+            
+        Yields:
+            Text chunks from the Gemini response
+        """
+        # Format user messages as context
+        user_context = "\n\n".join([f"User: {msg}" for msg in user_messages])
+        
+        # Create QA review message with image
+        qa_prompt = f"""Please review this woodworking assembly design.
+
+## User's Original Requests
+{user_context}
+
+## Test Suite Results
+{test_results_summary}
+
+## Rendered Design
+The image shows the current design from four different perspectives.
+
+Please provide your QA assessment following your review guidelines."""
+
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=image_data, mime_type="image/png"),
+                    types.Part.from_text(text=qa_prompt)
+                ]
+            )
+        ]
+        
+        try:
+            async for chunk in await self.client.aio.models.generate_content_stream(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.7,
+                )
+            ):
+                if chunk.text:
                     yield chunk.text
         except Exception as e:
             yield f"\n\n[Error: {str(e)}]"

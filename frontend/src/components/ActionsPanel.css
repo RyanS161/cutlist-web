@@ -92,6 +92,10 @@
   border-color: #9b59b6;
 }
 
+.qa-review-btn:hover:not(:disabled) {
+  border-color: #e67e22;
+}
+
 .reviewing-indicator {
   display: flex;
   align-items: center;

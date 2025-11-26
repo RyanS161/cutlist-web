@@ -19,8 +19,9 @@ class Settings:
         self.host: str = os.getenv("HOST", "0.0.0.0")
         self.port: int = int(os.getenv("PORT", "8000"))
         
-        # Load system prompt from config file
+        # Load system prompts from config files
         self.system_prompt: str = self._load_system_prompt()
+        self.qa_system_prompt: str = self._load_qa_system_prompt()
     
     def _load_system_prompt(self) -> str:
         """Load system prompt from config file."""
@@ -37,6 +38,21 @@ class Settings:
         
         # Default system prompt if file not found
         return "You are a helpful AI assistant."
+    
+    def _load_qa_system_prompt(self) -> str:
+        """Load QA agent system prompt from config file."""
+        possible_paths = [
+            Path(__file__).parent.parent / "config" / "qa_system_prompt.txt",
+            Path(__file__).parent.parent.parent / "config" / "qa_system_prompt.txt",
+            Path("config") / "qa_system_prompt.txt",
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                return path.read_text().strip()
+        
+        # Default QA system prompt if file not found
+        return "You are a QA agent reviewing designs."
     
     def validate(self) -> bool:
         """Validate that required settings are present."""

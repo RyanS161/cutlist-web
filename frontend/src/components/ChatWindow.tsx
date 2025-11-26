@@ -101,7 +101,7 @@ export function ChatWindow() {
     return designCodeRef.current;
   }, []);
   
-  const { messages, isStreaming, isReviewing, error, sendMessage, clearChat, chatStarted } = useChat({ 
+  const { messages, isStreaming, isReviewing, isQAReviewing, error, sendMessage, triggerQAReview, clearChat, chatStarted } = useChat({ 
     systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
@@ -167,6 +167,11 @@ Please analyze the error and update the code to fix it.`;
     
     sendMessage(message);
   }, [sendMessage]);
+
+  // Handle QA review request from Actions panel
+  const handleQAReview = useCallback((viewsUrl: string, testResultsSummary: string) => {
+    triggerQAReview(viewsUrl, testResultsSummary);
+  }, [triggerQAReview]);
 
   // Load default system prompt on mount
   useEffect(() => {
@@ -251,7 +256,7 @@ Please analyze the error and update the code to fix it.`;
           <button 
             onClick={handleClearChat} 
             className="clear-btn"
-            disabled={isStreaming || isReviewing || (!chatStarted && messages.length === 0)}
+            disabled={isStreaming || isReviewing || isQAReviewing || (!chatStarted && messages.length === 0)}
           >
             {chatStarted ? 'New Chat' : 'Reset'}
           </button>
@@ -287,10 +292,10 @@ Please analyze the error and update the code to fix it.`;
             {messages.map((message, index) => (
               <div
                 key={index}
-                className={`message ${message.role === 'user' ? 'user-message' : 'model-message'}`}
+                className={`message ${message.role === 'user' ? 'user-message' : 'model-message'}${message.agentType === 'qa' ? ' qa-message' : ''}`}
               >
                 <div className="message-role">
-                  {message.role === 'user' ? 'You' : 'Designer Agent'}
+                  {message.role === 'user' ? 'You' : message.agentType === 'qa' ? 'QA Agent' : 'Designer Agent'}
                 </div>
                 <div className="message-content">
                   {message.content ? (
@@ -322,16 +327,16 @@ Please analyze the error and update the code to fix it.`;
               ? "Chat with the designer..."
               : "Describe what you want to build..."
             }
-            disabled={isStreaming || isReviewing || isLoadingPrompt}
+            disabled={isStreaming || isReviewing || isQAReviewing || isLoadingPrompt}
             rows={1}
             className="message-input"
           />
           <button 
             type="submit" 
-            disabled={!input.trim() || isStreaming || isReviewing || isLoadingPrompt}
+            disabled={!input.trim() || isStreaming || isReviewing || isQAReviewing || isLoadingPrompt}
             className="send-btn"
           >
-            {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : chatStarted ? 'Send' : 'Start Design'}
+            {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : isQAReviewing ? 'QA Reviewing...' : chatStarted ? 'Send' : 'Start Design'}
           </button>
         </form>
         
@@ -374,12 +379,14 @@ Please analyze the error and update the code to fix it.`;
         <CodePanel
           code={designCode}
           onCodeChange={handleUserCodeChange}
-          isStreaming={isStreaming || isReviewing}
+          isStreaming={isStreaming || isReviewing || isQAReviewing}
           executionResult={executionResult}
           onReviewImage={handleReviewImage}
           onReviewTestResults={handleReviewTestResults}
           onReviewError={handleReviewError}
+          onQAReview={handleQAReview}
           isReviewing={isReviewing}
+          isQAReviewing={isQAReviewing}
         />
       )}
     </div>

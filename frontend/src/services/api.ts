@@ -5,7 +5,7 @@
 const API_BASE = '/api';
 
 export interface Message {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'qa_agent';
   content: string;
 }
 
@@ -294,4 +294,89 @@ export async function runTests(code: string): Promise<TestSuiteResult> {
   }
   
   return response.json();
+}
+
+export interface QAReviewStreamOptions {
+  viewsUrl: string;
+  testResultsSummary: string;
+  userMessages: string[];
+  onChunk: (chunk: string) => void;
+  onError: (error: Error) => void;
+  onComplete: () => void;
+}
+
+/**
+ * Stream a QA review response from the backend.
+ * Creates a fresh agent instance each time for independent assessment.
+ */
+export async function streamQAReview({
+  viewsUrl,
+  testResultsSummary,
+  userMessages,
+  onChunk,
+  onError,
+  onComplete,
+}: QAReviewStreamOptions): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE}/qa-review/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        views_url: viewsUrl, 
+        test_results_summary: testResultsSummary,
+        user_messages: userMessages,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body reader available');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      // SSE messages are separated by double newlines
+      const messages = buffer.split(/\r?\n\r?\n/);
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim()) continue;
+        
+        const dataLines: string[] = [];
+        const lines = message.split(/\r?\n/);
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            dataLines.push(line.slice(6));
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5));
+          }
+        }
+        
+        if (dataLines.length > 0) {
+          const content = dataLines.join('\n');
+          if (content && content !== '[DONE]') {
+            onChunk(content);
+          }
+        }
+      }
+    }
+
+    onComplete();
+  } catch (error) {
+    onError(error instanceof Error ? error : new Error(String(error)));
+  }
 }
