@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
 import 'highlight.js/styles/github-dark.css';
@@ -7,6 +7,9 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import * as THREE from 'three';
+import { runTests, type TestSuiteResult } from '../services/api';
+import { TestResultsPanel } from './TestResultsPanel';
+import { ActionsPanel } from './ActionsPanel';
 
 // STL Model component that loads and displays the model
 function StlModel({ url }: { url: string }) {
@@ -118,17 +121,30 @@ interface CodePanelProps {
   onCodeChange: (code: string) => void;
   isStreaming: boolean;
   executionResult?: ExecutionResult;
+  onReviewImage?: (viewsUrl: string, code: string) => void;
+  onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
+  isReviewing?: boolean;
 }
 
 /**
  * Code panel component with Python syntax highlighting and edit mode.
  * Uses highlight.js for syntax highlighting.
  */
-export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: CodePanelProps) {
+export function CodePanel({ 
+  code, 
+  onCodeChange, 
+  isStreaming, 
+  executionResult,
+  onReviewImage,
+  onReviewTestResults,
+  isReviewing = false,
+}: CodePanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedCode, setEditedCode] = useState(code);
   const [copied, setCopied] = useState(false);
   const [showOutput, setShowOutput] = useState(false);
+  const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
+  const [isRunningTests, setIsRunningTests] = useState(false);
 
   // Sync edited code with incoming code when not editing
   useEffect(() => {
@@ -162,6 +178,58 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
     }
   };
 
+  const handleRunTests = useCallback(async () => {
+    if (!code || isRunningTests) return;
+    
+    setIsRunningTests(true);
+    try {
+      const results = await runTests(code);
+      setTestResults(results);
+    } catch (err) {
+      console.error('Failed to run tests:', err);
+      setTestResults({
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        errors: 1,
+        tests: [{
+          name: 'Test Suite',
+          status: 'error',
+          message: err instanceof Error ? err.message : 'Failed to run tests',
+        }],
+        success: false,
+      });
+    } finally {
+      setIsRunningTests(false);
+    }
+  }, [code, isRunningTests]);
+
+  // Auto-run tests after execution succeeds
+  const prevExecutionStatus = useRef(executionResult?.status);
+  useEffect(() => {
+    // Run tests when execution transitions to success
+    if (prevExecutionStatus.current !== 'success' && 
+        executionResult?.status === 'success' && 
+        code && 
+        !isRunningTests) {
+      handleRunTests();
+    }
+    prevExecutionStatus.current = executionResult?.status;
+  }, [executionResult?.status, code, isRunningTests, handleRunTests]);
+
+  // Handlers for review actions
+  const handleReviewImage = useCallback(() => {
+    if (executionResult?.viewsUrl && onReviewImage) {
+      onReviewImage(executionResult.viewsUrl, code);
+    }
+  }, [executionResult?.viewsUrl, code, onReviewImage]);
+
+  const handleReviewTestResults = useCallback(() => {
+    if (testResults && onReviewTestResults) {
+      onReviewTestResults(testResults, code);
+    }
+  }, [testResults, code, onReviewTestResults]);
+
   // Python syntax highlighting using highlight.js
   const highlightPython = (codeInput: string): string => {
     if (!codeInput) return '';
@@ -187,6 +255,12 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
   };
 
   const getStatusIcon = () => {
+    if (isStreaming) {
+      return <span className="status-icon streaming">●</span>;
+    }
+    if (isRunningTests) {
+      return <span className="status-icon testing">⟳</span>;
+    }
     switch (executionResult?.status) {
       case 'running':
         return <span className="status-icon running">⟳</span>;
@@ -200,16 +274,31 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
   };
 
   const getStatusText = () => {
+    if (isStreaming) {
+      return 'Generating...';
+    }
+    if (isRunningTests) {
+      return 'Testing...';
+    }
     switch (executionResult?.status) {
       case 'running':
-        return 'Running...';
+        return 'Executing...';
       case 'success':
-        return 'Success';
+        return testResults?.success ? 'All Passed' : (testResults ? 'Tests Failed' : 'Executed');
       case 'error':
         return 'Error';
       default:
         return '';
     }
+  };
+
+  const getStatusClass = () => {
+    if (isStreaming) return 'streaming';
+    if (isRunningTests) return 'testing';
+    if (executionResult?.status === 'success' && testResults) {
+      return testResults.success ? 'success' : 'warning';
+    }
+    return executionResult?.status || '';
   };
 
   // Check if there's any output to show
@@ -227,8 +316,8 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
       <div className="code-panel-header">
         <div className="code-panel-title">
           <h3>Design Code</h3>
-          {executionResult && executionResult.status !== 'idle' && (
-            <div className={`execution-status ${executionResult.status}`}>
+          {(isStreaming || isRunningTests || (executionResult && executionResult.status !== 'idle')) && (
+            <div className={`execution-status ${getStatusClass()}`}>
               {getStatusIcon()}
               <span>{getStatusText()}</span>
             </div>
@@ -291,12 +380,6 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
               <p className="code-hint">
                 The AI will generate Python code here when you describe your design.
               </p>
-            </div>
-          )}
-          
-          {isStreaming && (
-            <div className="code-streaming-indicator">
-              <span className="streaming-dot">●</span> Generating...
             </div>
           )}
         </div>
@@ -365,6 +448,21 @@ export function CodePanel({ code, onCodeChange, isStreaming, executionResult }: 
             )}
           </div>
         )}
+        
+        {/* Bottom Section: Test Results and Actions in 2-column grid */}
+        <div className="bottom-panels-container">
+          <TestResultsPanel
+            testResults={testResults}
+            isRunning={isRunningTests}
+          />
+          <ActionsPanel
+            onReviewImage={handleReviewImage}
+            onReviewTestResults={handleReviewTestResults}
+            canReviewImage={!!executionResult?.viewsUrl}
+            canReviewTests={!!testResults}
+            isReviewing={isReviewing}
+          />
+        </div>
       </div>
     </div>
   );

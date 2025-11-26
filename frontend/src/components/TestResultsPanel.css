@@ -1,0 +1,280 @@
+.test-results-panel {
+  background: #1e1e2e;
+  border-radius: 6px;
+  border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.test-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #252536;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.test-panel-header h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #e0e0e0;
+}
+
+.test-running-indicator {
+  font-size: 10px;
+  color: #a855f7;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.run-tests-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: #4a5568;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.run-tests-btn:hover:not(:disabled) {
+  background: #5a6578;
+}
+
+.run-tests-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.test-results-content {
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.test-summary-bar {
+  display: flex;
+  gap: 12px;
+  padding: 6px 10px;
+  background: #252535;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.summary-stat {
+  font-size: 11px;
+  color: #888;
+}
+
+.summary-stat.has-passed {
+  color: #4ade80;
+}
+
+.summary-stat.has-failed {
+  color: #f87171;
+}
+
+.summary-stat.has-skipped {
+  color: #fbbf24;
+}
+
+.summary-stat.has-errors {
+  color: #fb923c;
+}
+
+.test-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.test-card {
+  background: #252535;
+  border-radius: 4px;
+  padding: 8px 10px;
+  border-left: 3px solid #666;
+}
+
+.test-card.passed {
+  border-left-color: #4ade80;
+}
+
+.test-card.failed {
+  border-left-color: #f87171;
+}
+
+.test-card.skipped {
+  border-left-color: #fbbf24;
+}
+
+.test-card.error {
+  border-left-color: #fb923c;
+}
+
+.test-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.test-icon {
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.test-icon.passed {
+  color: #4ade80;
+}
+
+.test-icon.failed {
+  color: #f87171;
+}
+
+.test-icon.skipped {
+  color: #fbbf24;
+}
+
+.test-icon.error {
+  color: #fb923c;
+}
+
+.test-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #e0e0e0;
+  flex: 1;
+}
+
+.test-status-badge {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.test-status-badge.passed {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.test-status-badge.failed {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.test-status-badge.skipped {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.test-status-badge.error {
+  background: rgba(251, 146, 60, 0.2);
+  color: #fb923c;
+}
+
+.test-message {
+  font-size: 10px;
+  color: #aaa;
+  line-height: 1.3;
+}
+
+.test-violations {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #333;
+}
+
+.violations-header {
+  font-size: 10px;
+  color: #f87171;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.violations-list {
+  margin: 0;
+  padding-left: 14px;
+}
+
+.violation-item {
+  font-size: 10px;
+  color: #ccc;
+  margin-bottom: 2px;
+  line-height: 1.3;
+}
+
+.test-summary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #333;
+}
+
+.summary-header {
+  font-size: 10px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.summary-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.summary-item {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: #333;
+  border-radius: 3px;
+  color: #ccc;
+}
+
+.test-empty-state {
+  padding: 12px;
+  text-align: center;
+}
+
+.test-empty-state p {
+  margin: 0;
+  color: #888;
+  font-size: 11px;
+}
+
+.test-hint {
+  margin-top: 4px !important;
+  font-size: 10px !important;
+  color: #666 !important;
+}
+
+/* Scrollbar styling */
+.test-results-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.test-results-content::-webkit-scrollbar-track {
+  background: #1e1e2e;
+}
+
+.test-results-content::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+.test-results-content::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}

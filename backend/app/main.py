@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from .services.gemini_service import get_gemini_service
+from .services.test_service import run_test_suite
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,11 @@ class ReviewDesignRequest(BaseModel):
     system_prompt: Optional[str] = None
 
 
+class TestCodeRequest(BaseModel):
+    """Request body for test endpoint."""
+    code: str
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -173,7 +179,7 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
     """
     try:
         from cadquery.vis import show, style
-        from PIL import Image, ImageDraw
+        from PIL import Image
     except ImportError as e:
         logger.warning(f"Required modules not available for rendering: {e}")
         return None
@@ -239,20 +245,11 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         # Positions for 2x2 grid: top-left, top-right, bottom-left, bottom-right
         positions = [(0, 0), (view_size, 0), (0, view_size), (view_size, view_size)]
         
-        draw = ImageDraw.Draw(combined)
-        
         for i, (view_name, temp_path) in enumerate(temp_files):
             # Load and paste the view image
             view_img = Image.open(temp_path)
             x, y = positions[i]
             combined.paste(view_img, (x, y))
-            
-            # Add label
-            label_y = y + 10
-            label_x = x + 10
-            # Draw text with shadow for visibility
-            # draw.text((label_x + 1, label_y + 1), view_name, fill=(0, 0, 0))
-            # draw.text((label_x, label_y), view_name, fill=(210, 180, 140))
             
             # Clean up temp file
             view_img.close()
@@ -433,6 +430,16 @@ async def chat_stream(request: ChatRequest):
             yield {"data": chunk}
     
     return EventSourceResponse(generate())
+
+
+@app.post("/api/test")
+async def run_tests(request: TestCodeRequest):
+    """Run the test suite on the provided code.
+    
+    Returns test results including execution check and constraint validation.
+    """
+    result = run_test_suite(request.code, _cached_modules)
+    return result.to_dict()
 
 
 @app.post("/api/review/stream")

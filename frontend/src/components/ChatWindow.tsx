@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../hooks/useChat';
-import { getDefaultSystemPrompt, executeCode } from '../services/api';
+import { getDefaultSystemPrompt, executeCode, type TestSuiteResult } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
@@ -13,14 +13,14 @@ export function ChatWindow() {
   const [designCode, setDesignCode] = useState('');
   const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
-  const [pendingReview, setPendingReview] = useState<{ viewsUrl: string; code: string } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
   
   // Execute code when it changes (from model or user save)
-  const runCode = useCallback(async (code: string, shouldReview: boolean = true) => {
+  const runCode = useCallback(async (code: string) => {
     if (!code.trim()) return;
     
     setExecutionResult({ status: 'running' });
@@ -35,11 +35,6 @@ export function ChatWindow() {
         stlUrl: result.stl_url,
         viewsUrl: result.views_url,
       });
-      
-      // If execution succeeded and we have a views URL, queue a review
-      if (result.success && result.views_url && shouldReview) {
-        setPendingReview({ viewsUrl: result.views_url, code });
-      }
     } catch (err) {
       setExecutionResult({
         status: 'error',
@@ -53,10 +48,10 @@ export function ChatWindow() {
     setDesignCode(code);
   }, []);
   
-  // Handle code change from user edits (save button) - no auto-review for user edits
+  // Handle code change from user edits (save button)
   const handleUserCodeChange = useCallback((code: string) => {
     setDesignCode(code);
-    runCode(code, false); // Don't auto-review for manual edits
+    runCode(code);
   }, [runCode]);
   
   const getCurrentCode = useCallback(() => {
@@ -69,14 +64,32 @@ export function ChatWindow() {
     getCurrentCode,
   });
   
-  // Trigger review when we have a pending review and streaming/reviewing is done
-  useEffect(() => {
-    if (pendingReview && !isStreaming && !isReviewing) {
-      const { viewsUrl, code } = pendingReview;
-      setPendingReview(null);
-      triggerReview(viewsUrl, code);
-    }
-  }, [pendingReview, isStreaming, isReviewing, triggerReview]);
+  // Handle image review request from Actions panel
+  const handleReviewImage = useCallback((viewsUrl: string, code: string) => {
+    triggerReview(viewsUrl, code);
+  }, [triggerReview]);
+  
+  // Handle test results review request from Actions panel
+  const handleReviewTestResults = useCallback((testResults: TestSuiteResult, _code: string) => {
+    // Format test results as a message for the AI
+    const testSummary = testResults.tests.map(test => 
+      `- ${test.name}: ${test.status.toUpperCase()}${test.message ? ` - ${test.message}` : ''}`
+    ).join('\n');
+    
+    const message = `Please review these test results and fix any issues in the code:
+
+**Test Results:**
+- Passed: ${testResults.passed}
+- Failed: ${testResults.failed}
+- Errors: ${testResults.errors}
+
+**Details:**
+${testSummary}
+
+Please analyze the failures and update the code to fix them.`;
+    
+    sendMessage(message);
+  }, [sendMessage]);
 
   // Load default system prompt on mount
   useEffect(() => {
@@ -230,6 +243,9 @@ export function ChatWindow() {
           onCodeChange={handleUserCodeChange}
           isStreaming={isStreaming || isReviewing}
           executionResult={executionResult}
+          onReviewImage={handleReviewImage}
+          onReviewTestResults={handleReviewTestResults}
+          isReviewing={isReviewing}
         />
       )}
     </div>

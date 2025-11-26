@@ -239,3 +239,49 @@ export async function streamReview({
     onError(error instanceof Error ? error : new Error(String(error)));
   }
 }
+
+export type TestStatus = 'passed' | 'failed' | 'skipped' | 'error';
+
+export interface TestResultItem {
+  name: string;
+  status: TestStatus;
+  message: string;
+  details?: {
+    violations?: string[];
+    parts_analyzed?: number;
+    summary?: Record<string, number>;
+    parts?: Array<{
+      index: number;
+      dimensions: Record<string, number>;
+      classification: Record<string, unknown>;
+    }>;
+  };
+}
+
+export interface TestSuiteResult {
+  passed: number;
+  failed: number;
+  skipped: number;
+  errors: number;
+  tests: TestResultItem[];
+  success: boolean;
+}
+
+/**
+ * Run the test suite on the provided code.
+ */
+export async function runTests(code: string): Promise<TestSuiteResult> {
+  const response = await fetch(`${API_BASE}/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ code }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Test execution failed: ${response.status}`);
+  }
+  
+  return response.json();
+}
