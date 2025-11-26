@@ -151,3 +151,91 @@ export async function getDefaultSystemPrompt(): Promise<string> {
   const data = await response.json();
   return data.system_prompt;
 }
+
+export interface ReviewStreamOptions {
+  viewsUrl: string;
+  currentCode: string;
+  history: Message[];
+  systemPrompt?: string;
+  onChunk: (chunk: string) => void;
+  onError: (error: Error) => void;
+  onComplete: () => void;
+}
+
+/**
+ * Stream a design review response from the backend.
+ * Sends the views image URL to the AI for visual review.
+ */
+export async function streamReview({
+  viewsUrl,
+  currentCode,
+  history,
+  systemPrompt,
+  onChunk,
+  onError,
+  onComplete,
+}: ReviewStreamOptions): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE}/review/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        views_url: viewsUrl, 
+        current_code: currentCode,
+        history,
+        system_prompt: systemPrompt,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body reader available');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      // SSE messages are separated by double newlines
+      const messages = buffer.split(/\r?\n\r?\n/);
+      buffer = messages.pop() || '';
+      
+      for (const message of messages) {
+        if (!message.trim()) continue;
+        
+        const dataLines: string[] = [];
+        const lines = message.split(/\r?\n/);
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            dataLines.push(line.slice(6));
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5));
+          }
+        }
+        
+        if (dataLines.length > 0) {
+          const content = dataLines.join('\n');
+          if (content && content !== '[DONE]') {
+            onChunk(content);
+          }
+        }
+      }
+    }
+
+    onComplete();
+  } catch (error) {
+    onError(error instanceof Error ? error : new Error(String(error)));
+  }
+}

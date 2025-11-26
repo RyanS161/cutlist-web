@@ -1,7 +1,7 @@
 """Gemini API service for streaming chat responses."""
 
 import logging
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict
 from google import genai
 from google.genai import types
 
@@ -93,6 +93,79 @@ class GeminiService:
                     # Log raw chunk for debugging
                     logger.debug(f"GEMINI RAW CHUNK: {repr(chunk.text)}")
                     print(f"[GEMINI RAW]: {repr(chunk.text)}", flush=True)
+                    yield chunk.text
+        except Exception as e:
+            yield f"\n\n[Error: {str(e)}]"
+
+    async def stream_review_with_image(
+        self,
+        image_data: bytes,
+        current_code: str,
+        history: List[Dict[str, str]] = None,
+        system_prompt: str = None
+    ) -> AsyncGenerator[str, None]:
+        """Stream a design review response from Gemini with an image.
+        
+        Args:
+            image_data: PNG image bytes of the rendered design
+            current_code: The current CadQuery code
+            history: Optional conversation history
+            system_prompt: Optional custom system prompt
+            
+        Yields:
+            Text chunks from the Gemini response
+        """
+        if history is None:
+            history = []
+        
+        # Build history contents
+        contents = []
+        for msg in history:
+            contents.append(
+                types.Content(
+                    role=msg["role"],
+                    parts=[types.Part.from_text(text=msg["content"])]
+                )
+            )
+        
+        # Create review message with image
+        review_prompt = f"""I've rendered the current design. Here is the 4-view image showing Front, Right, Top, and Isometric perspectives.
+
+Current code:
+```python
+{current_code}
+```
+
+Please review this rendered design:
+1. Does it match what was requested?
+2. Are there any obvious issues or improvements needed?
+3. If the design looks correct, confirm it's ready. If not, provide updated code.
+
+Keep your response brief - either confirm the design is good, or provide the corrected code."""
+
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=image_data, mime_type="image/png"),
+                    types.Part.from_text(text=review_prompt)
+                ]
+            )
+        )
+        
+        prompt_to_use = system_prompt if system_prompt is not None else self.system_prompt
+        
+        try:
+            async for chunk in await self.client.aio.models.generate_content_stream(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=prompt_to_use,
+                    temperature=0.7,
+                )
+            ):
+                if chunk.text:
+                    logger.debug(f"GEMINI REVIEW CHUNK: {repr(chunk.text)}")
                     yield chunk.text
         except Exception as e:
             yield f"\n\n[Error: {str(e)}]"

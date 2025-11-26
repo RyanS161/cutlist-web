@@ -13,13 +13,14 @@ export function ChatWindow() {
   const [designCode, setDesignCode] = useState('');
   const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
+  const [pendingReview, setPendingReview] = useState<{ viewsUrl: string; code: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
   
   // Execute code when it changes (from model or user save)
-  const runCode = useCallback(async (code: string) => {
+  const runCode = useCallback(async (code: string, shouldReview: boolean = true) => {
     if (!code.trim()) return;
     
     setExecutionResult({ status: 'running' });
@@ -34,6 +35,11 @@ export function ChatWindow() {
         stlUrl: result.stl_url,
         viewsUrl: result.views_url,
       });
+      
+      // If execution succeeded and we have a views URL, queue a review
+      if (result.success && result.views_url && shouldReview) {
+        setPendingReview({ viewsUrl: result.views_url, code });
+      }
     } catch (err) {
       setExecutionResult({
         status: 'error',
@@ -47,21 +53,30 @@ export function ChatWindow() {
     setDesignCode(code);
   }, []);
   
-  // Handle code change from user edits (save button)
+  // Handle code change from user edits (save button) - no auto-review for user edits
   const handleUserCodeChange = useCallback((code: string) => {
     setDesignCode(code);
-    runCode(code);
+    runCode(code, false); // Don't auto-review for manual edits
   }, [runCode]);
   
   const getCurrentCode = useCallback(() => {
     return designCodeRef.current;
   }, []);
   
-  const { messages, isStreaming, error, sendMessage, clearChat, chatStarted } = useChat({ 
+  const { messages, isStreaming, isReviewing, error, sendMessage, triggerReview, clearChat, chatStarted } = useChat({ 
     systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
   });
+  
+  // Trigger review when we have a pending review and streaming/reviewing is done
+  useEffect(() => {
+    if (pendingReview && !isStreaming && !isReviewing) {
+      const { viewsUrl, code } = pendingReview;
+      setPendingReview(null);
+      triggerReview(viewsUrl, code);
+    }
+  }, [pendingReview, isStreaming, isReviewing, triggerReview]);
 
   // Load default system prompt on mount
   useEffect(() => {
@@ -130,7 +145,7 @@ export function ChatWindow() {
           <button 
             onClick={handleClearChat} 
             className="clear-btn"
-            disabled={isStreaming || (!chatStarted && messages.length === 0)}
+            disabled={isStreaming || isReviewing || (!chatStarted && messages.length === 0)}
           >
             {chatStarted ? 'New Chat' : 'Reset'}
           </button>
@@ -195,16 +210,16 @@ export function ChatWindow() {
               ? "Describe your woodworking design... (Enter to send)"
               : "Describe what you want to build..."
             }
-            disabled={isStreaming || isLoadingPrompt}
+            disabled={isStreaming || isReviewing || isLoadingPrompt}
             rows={1}
             className="message-input"
           />
           <button 
             type="submit" 
-            disabled={!input.trim() || isStreaming || isLoadingPrompt}
+            disabled={!input.trim() || isStreaming || isReviewing || isLoadingPrompt}
             className="send-btn"
           >
-            {isStreaming ? 'Generating...' : chatStarted ? 'Send' : 'Start Design'}
+            {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : chatStarted ? 'Send' : 'Start Design'}
           </button>
         </form>
       </div>
@@ -213,7 +228,7 @@ export function ChatWindow() {
         <CodePanel
           code={designCode}
           onCodeChange={handleUserCodeChange}
-          isStreaming={isStreaming}
+          isStreaming={isStreaming || isReviewing}
           executionResult={executionResult}
         />
       )}

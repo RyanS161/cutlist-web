@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import type { Message } from '../services/api';
-import { streamChat } from '../services/api';
+import { streamChat, streamReview } from '../services/api';
 
 // Code block markers (markdown style)
 const CODE_START_PATTERN = /```python\n?/;
@@ -15,8 +15,10 @@ interface UseChatOptions {
 interface UseChatReturn {
   messages: Message[];
   isStreaming: boolean;
+  isReviewing: boolean;
   error: string | null;
   sendMessage: (content: string) => Promise<void>;
+  triggerReview: (viewsUrl: string, currentCode: string) => Promise<void>;
   clearChat: () => void;
   chatStarted: boolean;
 }
@@ -66,6 +68,7 @@ function parseStreamContent(fullContent: string): { displayText: string; code: s
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chatStarted, setChatStarted] = useState(false);
   
@@ -171,11 +174,74 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     rawContentRef.current = '';
   }, []);
 
+  /**
+   * Trigger a design review by sending the rendered image to the AI.
+   * The AI will analyze the image and provide feedback or corrections.
+   */
+  const triggerReview = useCallback(async (viewsUrl: string, currentCode: string) => {
+    if (isStreaming || isReviewing) return;
+
+    setError(null);
+    setIsReviewing(true);
+    rawContentRef.current = '';
+
+    // Add a system-like message to show review is in progress
+    const reviewMessage: Message = { role: 'model', content: '🔍 **Reviewing design...**' };
+    setMessages((prev) => [...prev, reviewMessage]);
+
+    await streamReview({
+      viewsUrl,
+      currentCode,
+      history: messagesRef.current.slice(0, -1), // Exclude the review message we just added
+      systemPrompt: systemPromptRef.current,
+      onChunk: (chunk) => {
+        // Accumulate raw content
+        rawContentRef.current += chunk;
+
+        // Parse the content for code blocks
+        const { displayText, code } = parseStreamContent(rawContentRef.current);
+
+        // Update code panel if we have new code
+        if (code !== null && onCodeUpdateRef.current) {
+          const cleanCode = code
+            .replace(/<[^>]*>/g, '')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"');
+          onCodeUpdateRef.current(cleanCode);
+        }
+
+        // Update the review message with content
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+          if (updated[lastIdx]?.role === 'model') {
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: '🔍 **Design Review:**\n\n' + displayText,
+            };
+          }
+          return updated;
+        });
+      },
+      onError: (err) => {
+        setError(err.message);
+        setIsReviewing(false);
+      },
+      onComplete: () => {
+        setIsReviewing(false);
+      },
+    });
+  }, [isStreaming, isReviewing]);
+
   return {
     messages,
     isStreaming,
+    isReviewing,
     error,
     sendMessage,
+    triggerReview,
     clearChat,
     chatStarted,
   };

@@ -107,6 +107,14 @@ class ExecuteCodeResponse(BaseModel):
     views_url: Optional[str] = None
 
 
+class ReviewDesignRequest(BaseModel):
+    """Request body for design review endpoint."""
+    views_url: str
+    current_code: str
+    history: Optional[List[Message]] = None
+    system_prompt: Optional[str] = None
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -159,13 +167,13 @@ async def get_image_file(filename: str):
 
 
 def _try_render_views(result, base_id: str) -> Optional[str]:
-    """Render a combined 2x2 grid PNG image of a CadQuery object from 4 different perspective views.
+    """Render a combined 2x2 grid PNG image of a CadQuery object from 4 different isometric views.
     
     Returns the URL to access the combined PNG file, or None if not a CadQuery object.
     """
     try:
         from cadquery.vis import show, style
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
     except ImportError as e:
         logger.warning(f"Required modules not available for rendering: {e}")
         return None
@@ -188,15 +196,16 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         return None
     
     try:
-        # Style with tan color
-        styled = style(renderable, color='tan')
+        # Style with tan color and no edges (transparent alpha for edges)
+        styled = style(renderable, color='tan', alpha=1.0, edge_color=(0.1, 0.1, 0.15, 0.0))
         
-        # Define 4 camera angles: (name, roll, elevation) 
+        # Define 4 isometric views from different corners (roll, elevation)
+        # These give views from each "corner" of the object
         views = [
-            ("Front", 0, 0),        # Front view
-            ("Right", -90, 0),      # Right view  
-            ("Top", 0, -90),        # Top view
-            ("Isometric", -35, -45),  # Isometric view
+            ("Front-Right", -35, -60),    # Front-right isometric
+            ("Front-Left", 35, -60),      # Front-left isometric  
+            ("Back-Right", -145, -60),    # Back-right isometric
+            ("Back-Left", 145, -60),      # Back-left isometric
         ]
         
         view_size = 400
@@ -204,11 +213,11 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         
         # Render each view to a temporary file
         for view_name, roll, elevation in views:
-            temp_filename = f"{base_id}_{view_name.lower()}_temp.png"
+            temp_filename = f"{base_id}_{view_name.lower().replace('-', '_')}_temp.png"
             temp_path = SVG_DIR / temp_filename
             temp_files.append((view_name, temp_path))
             
-            # Render with perspective view
+            # Render with perspective view - no edges
             show(
                 styled,
                 width=view_size,
@@ -219,6 +228,7 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
                 zoom=1.5,
                 interact=False,
                 trihedron=False,
+                edges=False,  # Disable edge rendering
                 bgcolor=(0.1, 0.1, 0.15),  # Dark background
             )
         
@@ -241,8 +251,8 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
             label_y = y + 10
             label_x = x + 10
             # Draw text with shadow for visibility
-            draw.text((label_x + 1, label_y + 1), view_name, fill=(0, 0, 0))
-            draw.text((label_x, label_y), view_name, fill=(210, 180, 140))
+            # draw.text((label_x + 1, label_y + 1), view_name, fill=(0, 0, 0))
+            # draw.text((label_x, label_y), view_name, fill=(210, 180, 140))
             
             # Clean up temp file
             view_img.close()
@@ -329,19 +339,20 @@ async def execute_code(request: ExecuteCodeRequest):
         **_cached_modules,  # Use pre-imported modules
     }
     
-    exec_locals = {}
     result = None
     
     try:
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             # Execute the code
-            exec(code, exec_globals, exec_locals)
+            # Use exec_globals for both globals and locals so that
+            # top-level variables are accessible inside nested functions
+            exec(code, exec_globals)
             
             # Try to get a meaningful result
             # Look for common result variables
             for var_name in ["result", "output", "parts", "model", "assembly"]:
-                if var_name in exec_locals:
-                    result = exec_locals[var_name]
+                if var_name in exec_globals:
+                    result = exec_globals[var_name]
                     break
         
         output = stdout_capture.getvalue()
@@ -419,6 +430,46 @@ async def chat_stream(request: ChatRequest):
         """Generate SSE events from Gemini stream."""
         async for chunk in gemini.stream_chat(message_with_context, history, system_prompt):
             # SSE format: yield dict with 'data' key
+            yield {"data": chunk}
+    
+    return EventSourceResponse(generate())
+
+
+@app.post("/api/review/stream")
+async def review_design_stream(request: ReviewDesignRequest):
+    """Stream a design review response from Gemini with an image.
+    
+    Takes the views URL, loads the image, and asks Gemini to review the design.
+    Returns a Server-Sent Events stream of the response.
+    """
+    gemini = get_gemini_service()
+    
+    # Extract filename from URL and load image
+    # URL format: /api/img/model_xxxxx_views.png
+    filename = request.views_url.split('/')[-1]
+    image_path = SVG_DIR / filename
+    
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Views image not found")
+    
+    # Read image data
+    image_data = image_path.read_bytes()
+    
+    # Convert history to dict format
+    history = []
+    if request.history:
+        history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    
+    system_prompt = request.system_prompt
+    
+    async def generate():
+        """Generate SSE events from Gemini stream."""
+        async for chunk in gemini.stream_review_with_image(
+            image_data=image_data,
+            current_code=request.current_code,
+            history=history,
+            system_prompt=system_prompt
+        ):
             yield {"data": chunk}
     
     return EventSourceResponse(generate())
