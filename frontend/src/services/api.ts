@@ -246,15 +246,24 @@ export interface TestResultItem {
   name: string;
   status: TestStatus;
   message: string;
+  long_message?: string;  // Detailed message for agent, not displayed in UI
   details?: {
     violations?: string[];
     parts_analyzed?: number;
     summary?: Record<string, number>;
     parts?: Array<{
       index: number;
-      dimensions: Record<string, number>;
+      dimensions: number[] | Record<string, number>;
       classification: Record<string, unknown>;
     }>;
+    // Intersection test details
+    intersections?: Array<{
+      part1: number;
+      part2: number;
+      volume: number;
+    }>;
+    intersection_descriptions?: string[];
+    pairs_checked?: number;
   };
 }
 

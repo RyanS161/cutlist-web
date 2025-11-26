@@ -420,7 +420,7 @@ export function CodePanel({
             <div className="code-empty">
               <p>No design code yet.</p>
               <p className="code-hint">
-                The AI will generate Python code here when you describe your design.
+                The designer agent will generate Python code here when you describe your design.
               </p>
             </div>
           )}

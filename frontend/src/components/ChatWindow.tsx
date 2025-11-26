@@ -1,53 +1,48 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { useChat } from '../hooks/useChat';
 import { getDefaultSystemPrompt, executeCode, type TestSuiteResult } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
+// Custom markdown component renderers
+const markdownComponents: Components = {
+  // Custom image renderer with styling
+  img: ({ src, alt }) => (
+    <img 
+      src={src} 
+      alt={alt || ''} 
+      className="chat-inline-image"
+    />
+  ),
+  // Ensure code blocks have proper styling
+  code: ({ className, children, ...props }) => {
+    const isInline = !className;
+    return isInline ? (
+      <code className="inline-code" {...props}>{children}</code>
+    ) : (
+      <code className={className} {...props}>{children}</code>
+    );
+  },
+  // Open links in new tab
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+};
+
 /**
- * Component to render message content with support for markdown images.
- * Parses ![alt](url) syntax and renders as <img> tags.
+ * Component to render message content with markdown support.
+ * Uses react-markdown for full markdown rendering including
+ * headings, lists, code blocks, bold, italic, links, and images.
  */
 function MessageContent({ content }: { content: string }) {
-  // Regex to match markdown images: ![alt text](url)
-  const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-  
-  const parts: (string | { type: 'image'; alt: string; url: string })[] = [];
-  let lastIndex = 0;
-  let match;
-  
-  while ((match = imageRegex.exec(content)) !== null) {
-    // Add text before the image
-    if (match.index > lastIndex) {
-      parts.push(content.slice(lastIndex, match.index));
-    }
-    // Add the image
-    parts.push({ type: 'image', alt: match[1], url: match[2] });
-    lastIndex = match.index + match[0].length;
-  }
-  
-  // Add remaining text after last image
-  if (lastIndex < content.length) {
-    parts.push(content.slice(lastIndex));
-  }
-  
   return (
-    <>
-      {parts.map((part, i) => {
-        if (typeof part === 'string') {
-          return <span key={i}>{part}</span>;
-        } else {
-          return (
-            <img 
-              key={i}
-              src={part.url} 
-              alt={part.alt} 
-              className="chat-inline-image"
-            />
-          );
-        }
-      })}
-    </>
+    <ReactMarkdown components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
   );
 }
 
@@ -132,9 +127,17 @@ If you see any problems, please update the code to fix them.`;
   // Handle test results review request from Actions panel
   const handleReviewTestResults = useCallback((testResults: TestSuiteResult, _code: string) => {
     // Format test results as a message for the AI
-    const testSummary = testResults.tests.map(test => 
-      `- ${test.name}: ${test.status.toUpperCase()}${test.message ? ` - ${test.message}` : ''}`
-    ).join('\n');
+    // Build detailed test information including long_message for agent
+    const failedTestsDetails = testResults.tests
+      .filter(test => test.status !== 'passed')
+      .map(test => {
+        let detail = `- **${test.name}**: ${test.message || ''}`;
+        if (test.long_message) {
+          detail += `\n${test.long_message}`;
+        }
+        return detail;
+      })
+      .join('\n\n');
     
     const message = `Please review these test results and fix any issues in the code:
 
@@ -143,8 +146,8 @@ If you see any problems, please update the code to fix them.`;
 - Failed: ${testResults.failed}
 - Errors: ${testResults.errors}
 
-**Details:**
-${testSummary}
+**Failed Tests:**
+${failedTestsDetails || 'None'}
 
 Please analyze the failures and update the code to fix them.`;
     
@@ -227,7 +230,7 @@ Please analyze the error and update the code to fix it.`;
     <div className="app-container">
       <div className="chat-container">
         <div className="chat-header">
-          <h1>Woodworking Designer</h1>
+          <h1>Cutlist</h1>
           <button 
             onClick={handleClearChat} 
             className="clear-btn"

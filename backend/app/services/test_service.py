@@ -29,6 +29,7 @@ class TestResult:
     status: TestStatus
     message: str
     details: Optional[Dict[str, Any]] = None
+    long_message: Optional[str] = None  # Detailed message for agent, not displayed in UI
     
     def to_dict(self) -> Dict[str, Any]:
         result = asdict(self)
@@ -204,88 +205,140 @@ def _is_valid_beam_length(length: float, tolerance: float = 1.0) -> bool:
     return remainder <= tolerance or remainder >= 50 - tolerance
 
 
-def _extract_solids(result) -> List[Any]:
+def _extract_solids(result) -> List[Dict[str, Any]]:
     """Extract individual solids from a CadQuery result.
     
     Handles various CadQuery types:
-    - Assembly: iterate through children and extract each part's solid
+    - Assembly: iterate through children and extract each part's solid with name
     - Workplane: use .vals() to get all objects, then extract solids from each
     - Compound: call .Solids() directly
     - Individual Solid: return as single-item list
+    
+    Returns a list of dicts with 'solid' and 'name' keys.
     """
-    solids = []
+    parts = []
     
     try:
         # Log the type for debugging
         logger.info(f"Extracting solids from type: {type(result).__name__}")
         logger.debug(f"Result attributes: {[a for a in dir(result) if not a.startswith('_')][:20]}")
         
-        # Case 1: Assembly object - detect by checking for 'children' dict attribute
-        # CadQuery Assembly has: obj, name, loc, color, children (dict), objects (list)
-        if hasattr(result, 'children') and isinstance(getattr(result, 'children', None), dict):
-            # This is an Assembly - iterate through all parts
-            children_count = len(result.children) if result.children else 0
-            logger.info(f"Processing Assembly with {children_count} children")
+        # Case 1: Assembly object - detect by checking for 'objects' attribute
+        # CadQuery Assembly has: obj, name, loc, color, children (dict), objects (dict)
+        # The 'objects' dict maps names to child Assembly nodes
+        if hasattr(result, 'objects') and hasattr(result, 'toCompound'):
+            objects_attr = getattr(result, 'objects', None)
             
-            def extract_from_assembly(asm, depth=0):
-                """Recursively extract solids from an assembly."""
-                extracted = []
-                indent = "  " * depth
+            logger.info(f"Assembly detected - objects: {type(objects_attr)}")
+            
+            # objects can be a dict (name -> Assembly) or list
+            objects_dict = {}
+            if isinstance(objects_attr, dict):
+                objects_dict = objects_attr
+            elif objects_attr is not None:
+                # Try to convert to dict if it has items()
+                try:
+                    if hasattr(objects_attr, 'items'):
+                        objects_dict = dict(objects_attr.items())
+                    else:
+                        # It's a list-like, create dict with index keys
+                        objects_dict = {f"part_{i+1}": obj for i, obj in enumerate(objects_attr)}
+                except Exception as e:
+                    logger.warning(f"Could not process objects: {e}")
+            
+            if objects_dict:
+                logger.info(f"Processing Assembly with {len(objects_dict)} objects")
                 
-                # Get the object at this assembly level (if any)
-                obj = getattr(asm, 'obj', None)
-                if obj is not None:
-                    logger.debug(f"{indent}Assembly node has obj of type: {type(obj).__name__}")
+                # Log what's in objects for debugging
+                for i, (obj_name, obj_asm) in enumerate(list(objects_dict.items())[:5]):  # Log first 5
+                    logger.info(f"  objects['{obj_name}']: type={type(obj_asm).__name__}")
+                
+                def apply_location_to_solid(solid, loc):
+                    """Apply a CadQuery Location transform to a solid."""
+                    if loc is None:
+                        return solid
+                    try:
+                        # Get the transformation from the Location
+                        if hasattr(loc, 'IsIdentity') and loc.IsIdentity():
+                            return solid  # No transformation needed
+                        
+                        # CadQuery Location wraps an OCP gp_Trsf transform
+                        # We can use .IsIdentity() to check if it's the identity transform
+                        if hasattr(loc, 'IsIdentity') and callable(loc.IsIdentity):
+                            if loc.IsIdentity():
+                                return solid
+                        
+                        # Apply the transform - solid.move() or solid.located()
+                        if hasattr(solid, 'move') and callable(solid.move):
+                            return solid.move(loc)
+                        elif hasattr(solid, 'located') and callable(solid.located):
+                            return solid.located(loc)
+                        elif hasattr(solid, 'Moved') and callable(solid.Moved):
+                            # OCC-level transform
+                            if hasattr(loc, 'IsIdentity'):
+                                return solid.Moved(loc)
+                        
+                        return solid
+                    except Exception as e:
+                        logger.debug(f"Could not apply location transform: {e}")
+                        return solid
+                
+                # Extract from objects dict - keys are names, values are Assembly nodes
+                for obj_name, obj_asm in objects_dict.items():
+                    # Get the location transform for this part
+                    loc = getattr(obj_asm, 'loc', None)
                     
-                    # If it's a Workplane, get the solid from it
-                    if hasattr(obj, 'val') and callable(obj.val):
-                        try:
-                            val = obj.val()
-                            logger.debug(f"{indent}Workplane.val() returned type: {type(val).__name__}")
-                            if hasattr(val, 'Solids') and callable(val.Solids):
-                                val_solids = val.Solids()
-                                if val_solids:
-                                    logger.debug(f"{indent}Found {len(val_solids)} solids in workplane")
-                                    extracted.extend(val_solids)
-                                else:
-                                    extracted.append(val)
-                            elif hasattr(val, 'BoundingBox'):
-                                extracted.append(val)
-                        except Exception as e:
-                            logger.warning(f"{indent}Failed to extract solid from workplane: {e}")
-                    elif hasattr(obj, 'Solids') and callable(obj.Solids):
-                        obj_solids = obj.Solids()
-                        if obj_solids:
-                            logger.debug(f"{indent}Found {len(obj_solids)} solids directly")
-                            extracted.extend(obj_solids)
-                        else:
-                            extracted.append(obj)
-                    elif hasattr(obj, 'BoundingBox'):
-                        extracted.append(obj)
-                else:
-                    logger.debug(f"{indent}Assembly node has no obj (root assembly)")
+                    # Get the solid from this assembly node
+                    obj = getattr(obj_asm, 'obj', None)
+                    if obj is not None:
+                        # If it's a Workplane, get the solid from it
+                        if hasattr(obj, 'val') and callable(obj.val):
+                            try:
+                                val = obj.val()
+                                if hasattr(val, 'Solids') and callable(val.Solids):
+                                    val_solids = val.Solids()
+                                    if val_solids:
+                                        for idx, s in enumerate(val_solids):
+                                            s_name = f"{obj_name}_{idx+1}" if len(val_solids) > 1 else obj_name
+                                            transformed = apply_location_to_solid(s, loc)
+                                            parts.append({'solid': transformed, 'name': s_name})
+                                    else:
+                                        transformed = apply_location_to_solid(val, loc)
+                                        parts.append({'solid': transformed, 'name': obj_name})
+                                elif hasattr(val, 'BoundingBox'):
+                                    transformed = apply_location_to_solid(val, loc)
+                                    parts.append({'solid': transformed, 'name': obj_name})
+                            except Exception as e:
+                                logger.warning(f"Failed to extract solid from '{obj_name}': {e}")
+                        elif hasattr(obj, 'Solids') and callable(obj.Solids):
+                            obj_solids = obj.Solids()
+                            if obj_solids:
+                                for idx, s in enumerate(obj_solids):
+                                    s_name = f"{obj_name}_{idx+1}" if len(obj_solids) > 1 else obj_name
+                                    transformed = apply_location_to_solid(s, loc)
+                                    parts.append({'solid': transformed, 'name': s_name})
+                            else:
+                                transformed = apply_location_to_solid(obj, loc)
+                                parts.append({'solid': transformed, 'name': obj_name})
+                        elif hasattr(obj, 'BoundingBox'):
+                            transformed = apply_location_to_solid(obj, loc)
+                            parts.append({'solid': transformed, 'name': obj_name})
+                    else:
+                        logger.debug(f"Object '{obj_name}' has no obj attribute")
                 
-                # Recurse into children
-                children = getattr(asm, 'children', {})
-                if children:
-                    logger.debug(f"{indent}Processing {len(children)} children")
-                    for child_name, child_asm in children.items():
-                        logger.debug(f"{indent}Processing child: {child_name}")
-                        extracted.extend(extract_from_assembly(child_asm, depth + 1))
-                
-                return extracted
+                logger.info(f"Extracted {len(parts)} parts from Assembly.objects")
+                for p in parts:
+                    logger.info(f"  Part: name='{p['name']}'")
             
-            solids = extract_from_assembly(result)
-            logger.info(f"Extracted {len(solids)} solids from Assembly tree traversal")
-            
-            # Fallback: if we didn't find any solids via tree traversal, use toCompound()
-            if not solids and hasattr(result, 'toCompound'):
-                logger.info("No solids found via tree traversal, trying toCompound() fallback")
+            # Fallback: if we didn't find any solids via objects list, use toCompound()
+            if not parts and hasattr(result, 'toCompound'):
+                logger.info("No solids found via objects, trying toCompound() fallback")
                 try:
                     compound = result.toCompound()
                     if hasattr(compound, 'Solids') and callable(compound.Solids):
                         solids = list(compound.Solids())
-                        logger.info(f"Extracted {len(solids)} solids via toCompound() fallback")
+                        parts = [{'solid': s, 'name': f'part_{i+1}'} for i, s in enumerate(solids)]
+                        logger.info(f"Extracted {len(parts)} solids via toCompound() fallback")
                 except Exception as e:
                     logger.warning(f"toCompound() fallback failed: {e}")
             
@@ -295,36 +348,41 @@ def _extract_solids(result) -> List[Any]:
             vals = result.vals()
             logger.info(f"Workplane contains {len(vals)} objects")
             
+            part_idx = 0
             for val in vals:
                 # Each val could be a Compound, Solid, or other shape
                 if hasattr(val, 'Solids') and callable(val.Solids):
                     val_solids = val.Solids()
                     if val_solids:
-                        solids.extend(val_solids)
+                        for s in val_solids:
+                            part_idx += 1
+                            parts.append({'solid': s, 'name': f'part_{part_idx}'})
                     else:
-                        # It might be a single solid that doesn't contain sub-solids
-                        solids.append(val)
+                        part_idx += 1
+                        parts.append({'solid': val, 'name': f'part_{part_idx}'})
                 elif hasattr(val, 'wrapped'):
-                    # It's a single shape
-                    solids.append(val)
+                    part_idx += 1
+                    parts.append({'solid': val, 'name': f'part_{part_idx}'})
                     
-            logger.info(f"Extracted {len(solids)} solids from Workplane")
+            logger.info(f"Extracted {len(parts)} solids from Workplane")
             
         # Case 3: Assembly with toCompound (fallback)
         elif hasattr(result, 'toCompound') and callable(result.toCompound):
             compound = result.toCompound()
             if hasattr(compound, 'Solids') and callable(compound.Solids):
-                solids.extend(compound.Solids())
-            logger.info(f"Extracted {len(solids)} solids from Assembly.toCompound()")
+                solids = list(compound.Solids())
+                parts = [{'solid': s, 'name': f'part_{i+1}'} for i, s in enumerate(solids)]
+            logger.info(f"Extracted {len(parts)} solids from Assembly.toCompound()")
             
         # Case 4: Compound or shape with Solids method
         elif hasattr(result, 'Solids') and callable(result.Solids):
-            solids.extend(result.Solids())
-            logger.info(f"Extracted {len(solids)} solids from Compound")
+            solids = list(result.Solids())
+            parts = [{'solid': s, 'name': f'part_{i+1}'} for i, s in enumerate(solids)]
+            logger.info(f"Extracted {len(parts)} solids from Compound")
             
         # Case 5: Direct solid
         elif hasattr(result, 'BoundingBox'):
-            solids.append(result)
+            parts.append({'solid': result, 'name': 'part_1'})
             logger.info("Result appears to be a single solid")
             
         else:
@@ -333,7 +391,7 @@ def _extract_solids(result) -> List[Any]:
     except Exception as e:
         logger.warning(f"Failed to extract solids: {e}", exc_info=True)
     
-    return solids
+    return parts
 
 
 def test_code_executes(code: str, exec_globals: dict) -> TestResult:
@@ -379,9 +437,9 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
 
 def test_parts_in_library(result) -> TestResult:
     """Test 2: Check if all parts meet the design constraints."""
-    solids = _extract_solids(result)
+    parts = _extract_solids(result)
     
-    if not solids:
+    if not parts:
         return TestResult(
             name="Parts in Library",
             status=TestStatus.SKIPPED,
@@ -391,7 +449,10 @@ def test_parts_in_library(result) -> TestResult:
     parts_info = []
     violations = []
     
-    for i, solid in enumerate(solids):
+    for i, part_data in enumerate(parts):
+        solid = part_data['solid']
+        name = part_data['name']
+        
         sorted_dims = _get_oriented_dims(solid)
         if sorted_dims is None:
             continue
@@ -399,6 +460,7 @@ def test_parts_in_library(result) -> TestResult:
         classification = _classify_part(sorted_dims)
         part_info = {
             'index': i + 1,
+            'name': name,
             'dimensions': sorted_dims,
             'classification': classification,
         }
@@ -408,24 +470,24 @@ def test_parts_in_library(result) -> TestResult:
         if classification['type'] == 'beam_28x28':
             if not classification['valid_length']:
                 violations.append(
-                    f"Part {i+1}: 28x28 beam length {classification['length']:.1f}mm "
+                    f"Part '{name}' (#{i+1}): 28x28 beam length {classification['length']:.1f}mm "
                     f"is not in valid range (100-500mm, 50mm increments)"
                 )
         elif classification['type'] == 'beam_48x24':
             if not classification['valid_length']:
                 violations.append(
-                    f"Part {i+1}: 48x24 beam length {classification['length']:.1f}mm "
+                    f"Part '{name}' (#{i+1}): 48x24 beam length {classification['length']:.1f}mm "
                     f"is not in valid range (100-500mm, 50mm increments)"
                 )
         elif classification['type'] == 'plywood':
             if not classification['valid_size']:
                 violations.append(
-                    f"Part {i+1}: Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
+                    f"Part '{name}' (#{i+1}): Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
                     f"exceeds maximum 500x500mm"
                 )
         elif classification['type'] == 'unknown':
             violations.append(
-                f"Part {i+1}: Unrecognized part type with dimensions "
+                f"Part '{name}' (#{i+1}): Unrecognized part with dimensions "
                 f"{classification['dimensions'][0]:.1f}x{classification['dimensions'][1]:.1f}x{classification['dimensions'][2]:.1f}mm"
             )
     
@@ -433,7 +495,8 @@ def test_parts_in_library(result) -> TestResult:
         return TestResult(
             name="Parts in Library",
             status=TestStatus.FAILED,
-            message=f"{len(violations)} part violation(s) found",
+            message=f"{len(violations)} part violation(s) found: ",
+            long_message="\n".join(violations),
             details={
                 'violations': violations,
                 'parts_analyzed': len(parts_info),
@@ -461,6 +524,136 @@ def test_parts_in_library(result) -> TestResult:
     )
 
 
+def _get_solid_volume(solid) -> float:
+    """Get the volume of a solid, returns 0 if unable to calculate."""
+    try:
+        if hasattr(solid, 'Volume') and callable(solid.Volume):
+            return solid.Volume()
+        elif hasattr(solid, 'val') and callable(solid.val):
+            return solid.val().Volume()
+    except Exception:
+        pass
+    return 0.0
+
+
+def _compute_intersection(solid1, solid2) -> Optional[Any]:
+    """Compute the boolean intersection of two solids.
+    
+    Returns the intersection solid, or None if no intersection or error.
+    """
+    try:
+        # Import cadquery for boolean operations
+        import cadquery as cq
+        
+        # Get the underlying shape objects
+        shape1 = solid1
+        shape2 = solid2
+        
+        # If they're wrapped in Workplane, extract the solid
+        if hasattr(solid1, 'val') and callable(solid1.val):
+            shape1 = solid1.val()
+        if hasattr(solid2, 'val') and callable(solid2.val):
+            shape2 = solid2.val()
+        
+        # Perform boolean intersection using CadQuery
+        # We need to wrap in a Workplane to use CQ operations
+        wp = cq.Workplane("XY").add(shape1)
+        intersection = wp.intersect(cq.Workplane("XY").add(shape2))
+        
+        # Check if the intersection produced any solids
+        try:
+            result = intersection.val()
+            if result is not None:
+                return result
+        except Exception:
+            pass
+            
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Intersection computation failed: {e}")
+        return None
+
+
+def test_no_intersections(result) -> TestResult:
+    """Test 3: Check if any parts intersect with each other."""
+    parts = _extract_solids(result)
+    
+    if len(parts) < 2:
+        return TestResult(
+            name="No Part Intersections",
+            status=TestStatus.PASSED,
+            message="Less than 2 parts, no intersections possible",
+        )
+    
+    intersections = []
+    checked_pairs = 0
+    
+    # Check each pair of solids for intersection
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            checked_pairs += 1
+            part1 = parts[i]
+            part2 = parts[j]
+            solid1 = part1['solid']
+            solid2 = part2['solid']
+            name1 = part1['name']
+            name2 = part2['name']
+            
+            try:
+                # Compute the intersection
+                intersection = _compute_intersection(solid1, solid2)
+                
+                if intersection is not None:
+                    # Get the volume of the intersection
+                    volume = _get_solid_volume(intersection)
+                    
+                    # Use a small threshold to account for floating point errors
+                    # and minor touching surfaces (1 cubic mm threshold)
+                    if volume > 1.0:
+                        intersections.append({
+                            'part1': i + 1,
+                            'part2': j + 1,
+                            'name1': name1,
+                            'name2': name2,
+                            'volume': round(volume, 2),
+                        })
+                        logger.info(f"Found intersection between '{name1}' and '{name2}': volume={volume:.2f}mm³")
+                        
+            except Exception as e:
+                logger.warning(f"Error checking intersection between '{name1}' and '{name2}': {e}")
+    
+    if intersections:
+        # Build human-readable intersection descriptions
+        intersection_descriptions = []
+        for isect in intersections:
+            intersection_descriptions.append(
+                f"'{isect['name1']}' intersects with '{isect['name2']}' "
+                f"(overlap volume: {isect['volume']}mm³)"
+            )
+        
+        return TestResult(
+            name="No Part Intersections",
+            status=TestStatus.FAILED,
+            message=f"{len(intersections)} intersection(s) found between parts: ",
+            long_message="\n".join(intersection_descriptions),
+            details={
+                'intersections': intersections,
+                'intersection_descriptions': intersection_descriptions,
+                'pairs_checked': checked_pairs,
+            }
+        )
+    
+    return TestResult(
+        name="No Part Intersections",
+        status=TestStatus.PASSED,
+        message=f"No intersections found ({checked_pairs} pairs checked)",
+        details={
+            'pairs_checked': checked_pairs,
+        }
+    )
+
+
 def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
     """Run the full test suite on the provided code."""
     tests: List[TestResult] = []
@@ -480,9 +673,18 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
         result = exec_globals.get('result')
         constraint_result = test_parts_in_library(result)
         tests.append(constraint_result)
+        
+        # Test 3: Check for part intersections
+        intersection_result = test_no_intersections(result)
+        tests.append(intersection_result)
     else:
         tests.append(TestResult(
             name="Parts in Library",
+            status=TestStatus.SKIPPED,
+            message="Skipped because code execution failed",
+        ))
+        tests.append(TestResult(
+            name="No Part Intersections",
             status=TestStatus.SKIPPED,
             message="Skipped because code execution failed",
         ))

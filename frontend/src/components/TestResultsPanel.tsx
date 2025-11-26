@@ -24,6 +24,7 @@ function TestIcon({ status }: { status: TestResultItem['status'] }) {
 function TestResultCard({ test }: { test: TestResultItem }) {
   const hasViolations = test.details?.violations && test.details.violations.length > 0;
   const hasParts = test.details?.parts && test.details.parts.length > 0;
+  const hasIntersections = test.details?.intersection_descriptions && test.details.intersection_descriptions.length > 0;
   
   const formatPartType = (type: string) => {
     return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -62,6 +63,17 @@ function TestResultCard({ test }: { test: TestResultItem }) {
           <ul className="violations-list">
             {test.details!.violations!.map((v, i) => (
               <li key={i} className="violation-item">{v}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      
+      {hasIntersections && (
+        <div className="test-intersections">
+          <div className="intersections-header">Intersections:</div>
+          <ul className="intersections-list">
+            {test.details!.intersection_descriptions!.map((desc: string, i: number) => (
+              <li key={i} className="intersection-item">{desc}</li>
             ))}
           </ul>
         </div>
