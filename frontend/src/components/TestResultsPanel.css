@@ -4,6 +4,7 @@
   border: 1px solid #333;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -63,6 +64,23 @@
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+}
+
+.test-results-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.test-results-content::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+.test-results-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+.test-results-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
 }
 
 .test-summary-bar {
@@ -242,6 +260,53 @@
   background: #333;
   border-radius: 3px;
   color: #ccc;
+}
+
+/* Parts list */
+.test-parts-list {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+
+.parts-header {
+  font-size: 10px;
+  color: #888;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.parts-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  padding: 4px 6px;
+  background: #252535;
+  border-radius: 3px;
+}
+
+.part-index {
+  color: #666;
+  min-width: 20px;
+  font-weight: 500;
+}
+
+.part-type {
+  flex: 1;
+  color: #aaa;
+}
+
+.part-dims {
+  color: #666;
+  font-family: monospace;
+  font-size: 9px;
 }
 
 .test-empty-state {

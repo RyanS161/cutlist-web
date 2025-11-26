@@ -27,4 +27,5 @@ Guidelines:
 - If the user asks you to modify the existing design, read their current code and update it
 - Always output the complete code, not just snippets
 - Use clear variable names and add comments explaining the design
-- Do NOT worry about visualization in the code, that will be taken care of on the backend
+- Do NOT worry about visualization in the code. Add no stylizations like color.
+- The design should be constructed such that it is stable when it rests on the ground level

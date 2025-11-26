@@ -91,8 +91,8 @@ class GeminiService:
             ):
                 if chunk.text:
                     # Log raw chunk for debugging
-                    logger.debug(f"GEMINI RAW CHUNK: {repr(chunk.text)}")
-                    print(f"[GEMINI RAW]: {repr(chunk.text)}", flush=True)
+                    # logger.debug(f"GEMINI RAW CHUNK: {repr(chunk.text)}")
+                    # print(f"[GEMINI RAW]: {repr(chunk.text)}", flush=True)
                     yield chunk.text
         except Exception as e:
             yield f"\n\n[Error: {str(e)}]"
@@ -129,17 +129,16 @@ class GeminiService:
             )
         
         # Create review message with image
-        review_prompt = f"""I've rendered the current design. Here is the 4-view image showing Front, Right, Top, and Isometric perspectives.
+        review_prompt = f"""I've rendered the current design. Here is an image showing four different perspectives.
 
 Current code:
 ```python
 {current_code}
 ```
 
-Please review this rendered design:
+Please review the rendered image and consider:
 1. Does it match what was requested?
-2. Are there any obvious issues or improvements needed?
-3. If the design looks correct, confirm it's ready. If not, provide updated code.
+2. Is the design assembleable and physically realizable?
 
 Keep your response brief - either confirm the design is good, or provide the corrected code."""
 
@@ -165,7 +164,7 @@ Keep your response brief - either confirm the design is good, or provide the cor
                 )
             ):
                 if chunk.text:
-                    logger.debug(f"GEMINI REVIEW CHUNK: {repr(chunk.text)}")
+                    # logger.debug(f"GEMINI REVIEW CHUNK: {repr(chunk.text)}")
                     yield chunk.text
         except Exception as e:
             yield f"\n\n[Error: {str(e)}]"

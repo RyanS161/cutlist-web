@@ -62,6 +62,25 @@ function StlModel({ url }: { url: string }) {
   );
 }
 
+// Axis helper component showing X (red), Y (green), Z (blue) arrows at origin
+function AxisHelper({ size = 50 }: { size?: number }) {
+  return (
+    <group>
+      {/* X axis - Red */}
+      <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), size, 0xff0000, size * 0.15, size * 0.08]} />
+      {/* Y axis - Green */}
+      <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), size, 0x00ff00, size * 0.15, size * 0.08]} />
+      {/* Z axis - Blue */}
+      <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), size, 0x0000ff, size * 0.15, size * 0.08]} />
+      {/* Origin sphere */}
+      <mesh position={[0, 0, 0]}>
+        <sphereGeometry args={[size * 0.03, 16, 16]} />
+        <meshBasicMaterial color={0xffffff} />
+      </mesh>
+    </group>
+  );
+}
+
 // Wrapper component with error handling for the STL viewer
 function StlViewer({ url }: { url: string }) {
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +107,7 @@ function StlViewer({ url }: { url: string }) {
       <ErrorBoundary3D>
         <StlModel url={url} />
       </ErrorBoundary3D>
+      <AxisHelper />
       <OrbitControls enableDamping dampingFactor={0.1} />
     </Canvas>
   );
@@ -123,6 +143,7 @@ interface CodePanelProps {
   executionResult?: ExecutionResult;
   onReviewImage?: (viewsUrl: string, code: string) => void;
   onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
+  onReviewError?: (error: string, code: string) => void;
   isReviewing?: boolean;
 }
 
@@ -137,6 +158,7 @@ export function CodePanel({
   executionResult,
   onReviewImage,
   onReviewTestResults,
+  onReviewError,
   isReviewing = false,
 }: CodePanelProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -145,6 +167,20 @@ export function CodePanel({
   const [showOutput, setShowOutput] = useState(false);
   const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
+  const [isCodeUpdating, setIsCodeUpdating] = useState(false);
+  
+  // Track if code is actively being updated during streaming
+  const prevCodeRef = useRef(code);
+  useEffect(() => {
+    if (isStreaming && code !== prevCodeRef.current) {
+      // Code changed while streaming - show generating indicator
+      setIsCodeUpdating(true);
+    } else if (!isStreaming) {
+      // Streaming stopped - hide generating indicator
+      setIsCodeUpdating(false);
+    }
+    prevCodeRef.current = code;
+  }, [code, isStreaming]);
 
   // Sync edited code with incoming code when not editing
   useEffect(() => {
@@ -230,6 +266,12 @@ export function CodePanel({
     }
   }, [testResults, code, onReviewTestResults]);
 
+  const handleReviewError = useCallback(() => {
+    if (executionResult?.error && onReviewError) {
+      onReviewError(executionResult.error, code);
+    }
+  }, [executionResult?.error, code, onReviewError]);
+
   // Python syntax highlighting using highlight.js
   const highlightPython = (codeInput: string): string => {
     if (!codeInput) return '';
@@ -255,7 +297,7 @@ export function CodePanel({
   };
 
   const getStatusIcon = () => {
-    if (isStreaming) {
+    if (isCodeUpdating) {
       return <span className="status-icon streaming">●</span>;
     }
     if (isRunningTests) {
@@ -274,7 +316,7 @@ export function CodePanel({
   };
 
   const getStatusText = () => {
-    if (isStreaming) {
+    if (isCodeUpdating) {
       return 'Generating...';
     }
     if (isRunningTests) {
@@ -293,7 +335,7 @@ export function CodePanel({
   };
 
   const getStatusClass = () => {
-    if (isStreaming) return 'streaming';
+    if (isCodeUpdating) return 'streaming';
     if (isRunningTests) return 'testing';
     if (executionResult?.status === 'success' && testResults) {
       return testResults.success ? 'success' : 'warning';
@@ -316,7 +358,7 @@ export function CodePanel({
       <div className="code-panel-header">
         <div className="code-panel-title">
           <h3>Design Code</h3>
-          {(isStreaming || isRunningTests || (executionResult && executionResult.status !== 'idle')) && (
+          {(isCodeUpdating || isRunningTests || (executionResult && executionResult.status !== 'idle')) && (
             <div className={`execution-status ${getStatusClass()}`}>
               {getStatusIcon()}
               <span>{getStatusText()}</span>
@@ -408,14 +450,34 @@ export function CodePanel({
                     <span>Executing code...</span>
                   </div>
                 ) : executionResult?.error ? (
-                  <pre className="output-error">{executionResult.error}</pre>
+                  <div className="error-container">
+                    <pre className="output-error">{executionResult.error}</pre>
+                    <button
+                      onClick={handleReviewError}
+                      disabled={isStreaming || isReviewing}
+                      className="send-error-btn"
+                    >
+                      <span className="action-icon">🔧</span>
+                      <span>Send Error to Agent for Fix</span>
+                    </button>
+                  </div>
                 ) : (
                   <>
                     {/* STL 3D Viewer and rendered views side by side */}
                     {executionResult?.stlUrl && (
                       <div className="model-viewers-container">
                         <div className="stl-viewer-container">
-                          <div className="viewer-label">Interactive 3D View</div>
+                          <div className="viewer-label">
+                            <span>Interactive 3D View</span>
+                            <a 
+                              href={executionResult.stlUrl} 
+                              download="model.stl"
+                              className="download-stl-btn"
+                              title="Download STL file"
+                            >
+                              ⬇ Download STL
+                            </a>
+                          </div>
                           <StlViewer url={executionResult.stlUrl} />
                         </div>
                         {executionResult?.viewsUrl && (

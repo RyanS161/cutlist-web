@@ -23,6 +23,25 @@ function TestIcon({ status }: { status: TestResultItem['status'] }) {
 
 function TestResultCard({ test }: { test: TestResultItem }) {
   const hasViolations = test.details?.violations && test.details.violations.length > 0;
+  const hasParts = test.details?.parts && test.details.parts.length > 0;
+  
+  const formatPartType = (type: string) => {
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
+  
+  const formatDimensions = (dims: Record<string, number>) => {
+    return `${dims.x}×${dims.y}×${dims.z}mm`;
+  };
+  
+  const getPartDescription = (classification: Record<string, unknown>) => {
+    const type = classification.type as string;
+    if (type === 'beam_28x28' || type === 'beam_48x24') {
+      return `${formatPartType(type)} - Length: ${classification.length}mm`;
+    } else if (type === 'plywood') {
+      return `Plywood - ${classification.width}×${classification.height}mm (${classification.thickness}mm thick)`;
+    }
+    return formatPartType(type);
+  };
   
   return (
     <div className={`test-card ${test.status}`}>
@@ -44,14 +63,16 @@ function TestResultCard({ test }: { test: TestResultItem }) {
         </div>
       )}
       
-      {test.details?.summary && (
-        <div className="test-summary">
-          <div className="summary-header">Parts found:</div>
-          <div className="summary-items">
-            {Object.entries(test.details.summary).map(([type, count]) => (
-              <span key={type} className="summary-item">
-                {count}× {type.replace('_', ' ')}
-              </span>
+      {hasParts && (
+        <div className="test-parts-list">
+          <div className="parts-header">Parts Found ({test.details!.parts!.length}):</div>
+          <div className="parts-table">
+            {test.details!.parts!.map((part) => (
+              <div key={part.index} className="part-row">
+                <span className="part-index">#{part.index}</span>
+                <span className="part-type">{getPartDescription(part.classification)}</span>
+                <span className="part-dims">{formatDimensions(part.dimensions)}</span>
+              </div>
             ))}
           </div>
         </div>

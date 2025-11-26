@@ -5,6 +5,53 @@ import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
 /**
+ * Component to render message content with support for markdown images.
+ * Parses ![alt](url) syntax and renders as <img> tags.
+ */
+function MessageContent({ content }: { content: string }) {
+  // Regex to match markdown images: ![alt text](url)
+  const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  
+  const parts: (string | { type: 'image'; alt: string; url: string })[] = [];
+  let lastIndex = 0;
+  let match;
+  
+  while ((match = imageRegex.exec(content)) !== null) {
+    // Add text before the image
+    if (match.index > lastIndex) {
+      parts.push(content.slice(lastIndex, match.index));
+    }
+    // Add the image
+    parts.push({ type: 'image', alt: match[1], url: match[2] });
+    lastIndex = match.index + match[0].length;
+  }
+  
+  // Add remaining text after last image
+  if (lastIndex < content.length) {
+    parts.push(content.slice(lastIndex));
+  }
+  
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (typeof part === 'string') {
+          return <span key={i}>{part}</span>;
+        } else {
+          return (
+            <img 
+              key={i}
+              src={part.url} 
+              alt={part.alt} 
+              className="chat-inline-image"
+            />
+          );
+        }
+      })}
+    </>
+  );
+}
+
+/**
  * Chat window component with message display, code panel, and input.
  */
 export function ChatWindow() {
@@ -58,16 +105,29 @@ export function ChatWindow() {
     return designCodeRef.current;
   }, []);
   
-  const { messages, isStreaming, isReviewing, error, sendMessage, triggerReview, clearChat, chatStarted } = useChat({ 
+  const { messages, isStreaming, isReviewing, error, sendMessage, clearChat, chatStarted } = useChat({ 
     systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
   });
   
   // Handle image review request from Actions panel
-  const handleReviewImage = useCallback((viewsUrl: string, code: string) => {
-    triggerReview(viewsUrl, code);
-  }, [triggerReview]);
+  const handleReviewImage = useCallback((viewsUrl: string, _code: string) => {
+    // Send as a user message asking for visual review, include the image
+    const message = `Please review the rendered image of my design:
+
+![Design Preview](${viewsUrl})
+
+Check if:
+- The proportions and structure look correct
+- All parts appear to be properly positioned and aligned
+- The design matches what I requested
+- There are any visual issues or improvements to suggest
+
+If you see any problems, please update the code to fix them.`;
+    
+    sendMessage(message);
+  }, [sendMessage]);
   
   // Handle test results review request from Actions panel
   const handleReviewTestResults = useCallback((testResults: TestSuiteResult, _code: string) => {
@@ -87,6 +147,19 @@ export function ChatWindow() {
 ${testSummary}
 
 Please analyze the failures and update the code to fix them.`;
+    
+    sendMessage(message);
+  }, [sendMessage]);
+
+  // Handle error review request from output panel
+  const handleReviewError = useCallback((error: string, _code: string) => {
+    const message = `I got the following error when running the code. Please fix it:
+
+\`\`\`
+${error}
+\`\`\`
+
+Please analyze the error and update the code to fix it.`;
     
     sendMessage(message);
   }, [sendMessage]);
@@ -196,7 +269,9 @@ Please analyze the failures and update the code to fix them.`;
                   {message.role === 'user' ? 'You' : 'AI'}
                 </div>
                 <div className="message-content">
-                  {message.content || (isStreaming && index === messages.length - 1 ? (
+                  {message.content ? (
+                    <MessageContent content={message.content} />
+                  ) : (isStreaming && index === messages.length - 1 ? (
                     <span className="typing-indicator">●●●</span>
                   ) : null)}
                 </div>
@@ -235,6 +310,40 @@ Please analyze the failures and update the code to fix them.`;
             {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : chatStarted ? 'Send' : 'Start Design'}
           </button>
         </form>
+        
+        {!chatStarted && (
+          <div className="quick-prompts">
+            <span className="quick-prompts-label">Try:</span>
+            <button 
+              className="quick-prompt-btn"
+              onClick={() => sendMessage("A chair with a slatted back")}
+              disabled={isLoadingPrompt}
+            >
+              A chair with a slatted back
+            </button>
+            <button 
+              className="quick-prompt-btn"
+              onClick={() => sendMessage("A birdhouse")}
+              disabled={isLoadingPrompt}
+            >
+              A birdhouse
+            </button>
+            <button 
+              className="quick-prompt-btn"
+              onClick={() => sendMessage("An open bookshelf with four shelves")}
+              disabled={isLoadingPrompt}
+            >
+              An open bookshelf with four shelves
+            </button>
+            <button 
+              className="quick-prompt-btn"
+              onClick={() => sendMessage("The letters ETH")}
+              disabled={isLoadingPrompt}
+            >
+              The letters ETH
+            </button>
+          </div>
+        )}
       </div>
       
       {chatStarted && (
@@ -245,6 +354,7 @@ Please analyze the failures and update the code to fix them.`;
           executionResult={executionResult}
           onReviewImage={handleReviewImage}
           onReviewTestResults={handleReviewTestResults}
+          onReviewError={handleReviewError}
           isReviewing={isReviewing}
         />
       )}

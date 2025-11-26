@@ -161,27 +161,60 @@ def _is_valid_beam_length(length: float, tolerance: float = 1.0) -> bool:
 
 
 def _extract_solids(result) -> List[Any]:
-    """Extract individual solids from a CadQuery result."""
+    """Extract individual solids from a CadQuery result.
+    
+    Handles various CadQuery types:
+    - Workplane: use .vals() to get all objects, then extract solids from each
+    - Assembly: call .toCompound() then .Solids()
+    - Compound: call .Solids() directly
+    - Individual Solid: return as single-item list
+    """
     solids = []
     
     try:
-        # If it's a Workplane with val()
-        if hasattr(result, 'val') and callable(result.val):
-            val = result.val()
-            if hasattr(val, 'Solids'):
-                solids.extend(val.Solids())
-            else:
-                solids.append(val)
-        # If it's a Compound
-        elif hasattr(result, 'Solids'):
-            solids.extend(result.Solids())
-        # If it's an Assembly
-        elif hasattr(result, 'toCompound'):
+        # Case 1: Workplane object (most common)
+        if hasattr(result, 'vals') and callable(result.vals):
+            # Use .vals() to get ALL objects in the workplane, not just the last one
+            vals = result.vals()
+            logger.info(f"Workplane contains {len(vals)} objects")
+            
+            for val in vals:
+                # Each val could be a Compound, Solid, or other shape
+                if hasattr(val, 'Solids') and callable(val.Solids):
+                    val_solids = val.Solids()
+                    if val_solids:
+                        solids.extend(val_solids)
+                    else:
+                        # It might be a single solid that doesn't contain sub-solids
+                        solids.append(val)
+                elif hasattr(val, 'wrapped'):
+                    # It's a single shape
+                    solids.append(val)
+                    
+            logger.info(f"Extracted {len(solids)} solids from Workplane")
+            
+        # Case 2: Assembly object
+        elif hasattr(result, 'toCompound') and callable(result.toCompound):
             compound = result.toCompound()
-            if hasattr(compound, 'Solids'):
+            if hasattr(compound, 'Solids') and callable(compound.Solids):
                 solids.extend(compound.Solids())
+            logger.info(f"Extracted {len(solids)} solids from Assembly")
+            
+        # Case 3: Compound or shape with Solids method
+        elif hasattr(result, 'Solids') and callable(result.Solids):
+            solids.extend(result.Solids())
+            logger.info(f"Extracted {len(solids)} solids from Compound")
+            
+        # Case 4: Direct solid
+        elif hasattr(result, 'BoundingBox'):
+            solids.append(result)
+            logger.info("Result appears to be a single solid")
+            
+        else:
+            logger.warning(f"Unknown result type: {type(result)}, attributes: {dir(result)[:10]}...")
+            
     except Exception as e:
-        logger.warning(f"Failed to extract solids: {e}")
+        logger.warning(f"Failed to extract solids: {e}", exc_info=True)
     
     return solids
 
