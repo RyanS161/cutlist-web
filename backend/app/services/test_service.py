@@ -5,6 +5,13 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+try:
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.Bnd import Bnd_OBB
+    HAS_OCP = True
+except ImportError:
+    HAS_OCP = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,30 +82,67 @@ CONSTRAINTS = {
 }
 
 
-def _get_bounding_box(solid) -> Optional[Dict[str, float]]:
-    """Get the bounding box dimensions of a solid."""
+def _get_oriented_dims(shape) -> Optional[List[float]]:
+    """
+    Calculates the dimensions (L, W, H) of the tightest-fitting
+    oriented bounding box around a shape.
+    
+    Works for:
+    - Arbitrarily rotated parts
+    - Parts with holes, cutouts, or chamfers
+    - Plywood sheets, beams, etc.
+    
+    Returns sorted dimensions [smallest, middle, largest] or None on error.
+    """
+    if not HAS_OCP:
+        logger.warning("OCP not available, falling back to axis-aligned bounding box")
+        return _get_axis_aligned_dims(shape)
+    
+    try:
+        # Initialize the OpenCascade Oriented Bounding Box calculator
+        obb = Bnd_OBB()
+        
+        # Get the underlying TopoDS_Shape
+        if hasattr(shape, 'val') and callable(shape.val):
+            # It's a Workplane
+            topo_shape = shape.val().wrapped
+        elif hasattr(shape, 'wrapped'):
+            # It's a Shape (Solid, Compound, etc.)
+            topo_shape = shape.wrapped
+        else:
+            logger.warning(f"Unknown shape type for OBB: {type(shape)}")
+            return _get_axis_aligned_dims(shape)
+        
+        # Calculate the oriented bounding box
+        # Args: shape, obb, isTriangulation, isOptimal, isShapeToleranceUsed
+        BRepBndLib.AddOBB_s(topo_shape, obb, False, True, False)
+        
+        # Extract dimensions (OBB stores half-lengths)
+        x_len = obb.XHSize() * 2
+        y_len = obb.YHSize() * 2
+        z_len = obb.ZHSize() * 2
+        
+        # Return sorted dimensions
+        return sorted([round(x_len, 2), round(y_len, 2), round(z_len, 2)])
+        
+    except Exception as e:
+        logger.warning(f"Failed to get oriented bounding box: {e}")
+        return _get_axis_aligned_dims(shape)
+
+
+def _get_axis_aligned_dims(solid) -> Optional[List[float]]:
+    """Fallback: Get axis-aligned bounding box dimensions of a solid."""
     try:
         bb = solid.BoundingBox()
-        return {
-            'x': round(bb.xlen, 2),
-            'y': round(bb.ylen, 2),
-            'z': round(bb.zlen, 2),
-            'xmin': round(bb.xmin, 2),
-            'xmax': round(bb.xmax, 2),
-            'ymin': round(bb.ymin, 2),
-            'ymax': round(bb.ymax, 2),
-            'zmin': round(bb.zmin, 2),
-            'zmax': round(bb.zmax, 2),
-        }
+        dims = [round(bb.xlen, 2), round(bb.ylen, 2), round(bb.zlen, 2)]
+        return sorted(dims)
     except Exception as e:
         logger.warning(f"Failed to get bounding box: {e}")
         return None
 
 
-def _classify_part(dims: Dict[str, float]) -> Dict[str, Any]:
-    """Classify a part based on its dimensions."""
-    x, y, z = dims['x'], dims['y'], dims['z']
-    sorted_dims = sorted([x, y, z])
+def _classify_part(sorted_dims: List[float]) -> Dict[str, Any]:
+    """Classify a part based on its sorted dimensions [smallest, middle, largest]."""
     
     # Check for 28x28 beam
     if _is_beam_28x28(sorted_dims):
@@ -164,16 +208,89 @@ def _extract_solids(result) -> List[Any]:
     """Extract individual solids from a CadQuery result.
     
     Handles various CadQuery types:
+    - Assembly: iterate through children and extract each part's solid
     - Workplane: use .vals() to get all objects, then extract solids from each
-    - Assembly: call .toCompound() then .Solids()
     - Compound: call .Solids() directly
     - Individual Solid: return as single-item list
     """
     solids = []
     
     try:
-        # Case 1: Workplane object (most common)
-        if hasattr(result, 'vals') and callable(result.vals):
+        # Log the type for debugging
+        logger.info(f"Extracting solids from type: {type(result).__name__}")
+        logger.debug(f"Result attributes: {[a for a in dir(result) if not a.startswith('_')][:20]}")
+        
+        # Case 1: Assembly object - detect by checking for 'children' dict attribute
+        # CadQuery Assembly has: obj, name, loc, color, children (dict), objects (list)
+        if hasattr(result, 'children') and isinstance(getattr(result, 'children', None), dict):
+            # This is an Assembly - iterate through all parts
+            children_count = len(result.children) if result.children else 0
+            logger.info(f"Processing Assembly with {children_count} children")
+            
+            def extract_from_assembly(asm, depth=0):
+                """Recursively extract solids from an assembly."""
+                extracted = []
+                indent = "  " * depth
+                
+                # Get the object at this assembly level (if any)
+                obj = getattr(asm, 'obj', None)
+                if obj is not None:
+                    logger.debug(f"{indent}Assembly node has obj of type: {type(obj).__name__}")
+                    
+                    # If it's a Workplane, get the solid from it
+                    if hasattr(obj, 'val') and callable(obj.val):
+                        try:
+                            val = obj.val()
+                            logger.debug(f"{indent}Workplane.val() returned type: {type(val).__name__}")
+                            if hasattr(val, 'Solids') and callable(val.Solids):
+                                val_solids = val.Solids()
+                                if val_solids:
+                                    logger.debug(f"{indent}Found {len(val_solids)} solids in workplane")
+                                    extracted.extend(val_solids)
+                                else:
+                                    extracted.append(val)
+                            elif hasattr(val, 'BoundingBox'):
+                                extracted.append(val)
+                        except Exception as e:
+                            logger.warning(f"{indent}Failed to extract solid from workplane: {e}")
+                    elif hasattr(obj, 'Solids') and callable(obj.Solids):
+                        obj_solids = obj.Solids()
+                        if obj_solids:
+                            logger.debug(f"{indent}Found {len(obj_solids)} solids directly")
+                            extracted.extend(obj_solids)
+                        else:
+                            extracted.append(obj)
+                    elif hasattr(obj, 'BoundingBox'):
+                        extracted.append(obj)
+                else:
+                    logger.debug(f"{indent}Assembly node has no obj (root assembly)")
+                
+                # Recurse into children
+                children = getattr(asm, 'children', {})
+                if children:
+                    logger.debug(f"{indent}Processing {len(children)} children")
+                    for child_name, child_asm in children.items():
+                        logger.debug(f"{indent}Processing child: {child_name}")
+                        extracted.extend(extract_from_assembly(child_asm, depth + 1))
+                
+                return extracted
+            
+            solids = extract_from_assembly(result)
+            logger.info(f"Extracted {len(solids)} solids from Assembly tree traversal")
+            
+            # Fallback: if we didn't find any solids via tree traversal, use toCompound()
+            if not solids and hasattr(result, 'toCompound'):
+                logger.info("No solids found via tree traversal, trying toCompound() fallback")
+                try:
+                    compound = result.toCompound()
+                    if hasattr(compound, 'Solids') and callable(compound.Solids):
+                        solids = list(compound.Solids())
+                        logger.info(f"Extracted {len(solids)} solids via toCompound() fallback")
+                except Exception as e:
+                    logger.warning(f"toCompound() fallback failed: {e}")
+            
+        # Case 2: Workplane object (legacy support)
+        elif hasattr(result, 'vals') and callable(result.vals):
             # Use .vals() to get ALL objects in the workplane, not just the last one
             vals = result.vals()
             logger.info(f"Workplane contains {len(vals)} objects")
@@ -193,19 +310,19 @@ def _extract_solids(result) -> List[Any]:
                     
             logger.info(f"Extracted {len(solids)} solids from Workplane")
             
-        # Case 2: Assembly object
+        # Case 3: Assembly with toCompound (fallback)
         elif hasattr(result, 'toCompound') and callable(result.toCompound):
             compound = result.toCompound()
             if hasattr(compound, 'Solids') and callable(compound.Solids):
                 solids.extend(compound.Solids())
-            logger.info(f"Extracted {len(solids)} solids from Assembly")
+            logger.info(f"Extracted {len(solids)} solids from Assembly.toCompound()")
             
-        # Case 3: Compound or shape with Solids method
+        # Case 4: Compound or shape with Solids method
         elif hasattr(result, 'Solids') and callable(result.Solids):
             solids.extend(result.Solids())
             logger.info(f"Extracted {len(solids)} solids from Compound")
             
-        # Case 4: Direct solid
+        # Case 5: Direct solid
         elif hasattr(result, 'BoundingBox'):
             solids.append(result)
             logger.info("Result appears to be a single solid")
@@ -260,13 +377,13 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
         )
 
 
-def test_part_constraints(result) -> TestResult:
+def test_parts_in_library(result) -> TestResult:
     """Test 2: Check if all parts meet the design constraints."""
     solids = _extract_solids(result)
     
     if not solids:
         return TestResult(
-            name="Part Constraints",
+            name="Parts in Library",
             status=TestStatus.SKIPPED,
             message="No individual parts found to analyze",
         )
@@ -275,14 +392,14 @@ def test_part_constraints(result) -> TestResult:
     violations = []
     
     for i, solid in enumerate(solids):
-        dims = _get_bounding_box(solid)
-        if dims is None:
+        sorted_dims = _get_oriented_dims(solid)
+        if sorted_dims is None:
             continue
             
-        classification = _classify_part(dims)
+        classification = _classify_part(sorted_dims)
         part_info = {
             'index': i + 1,
-            'dimensions': dims,
+            'dimensions': sorted_dims,
             'classification': classification,
         }
         parts_info.append(part_info)
@@ -314,9 +431,9 @@ def test_part_constraints(result) -> TestResult:
     
     if violations:
         return TestResult(
-            name="Part Constraints",
+            name="Parts in Library",
             status=TestStatus.FAILED,
-            message=f"{len(violations)} constraint violation(s) found",
+            message=f"{len(violations)} part violation(s) found",
             details={
                 'violations': violations,
                 'parts_analyzed': len(parts_info),
@@ -333,7 +450,7 @@ def test_part_constraints(result) -> TestResult:
     summary_str = ", ".join(f"{count} {ptype}" for ptype, count in part_summary.items())
     
     return TestResult(
-        name="Part Constraints",
+        name="Parts in Library",
         status=TestStatus.PASSED,
         message=f"All {len(parts_info)} parts meet constraints ({summary_str})",
         details={
@@ -361,11 +478,11 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
     # Test 2: Part constraints (only if code executed successfully)
     if exec_result.status == TestStatus.PASSED:
         result = exec_globals.get('result')
-        constraint_result = test_part_constraints(result)
+        constraint_result = test_parts_in_library(result)
         tests.append(constraint_result)
     else:
         tests.append(TestResult(
-            name="Part Constraints",
+            name="Parts in Library",
             status=TestStatus.SKIPPED,
             message="Skipped because code execution failed",
         ))

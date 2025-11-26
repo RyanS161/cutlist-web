@@ -190,20 +190,29 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
     
     # Check if result is a CadQuery Workplane or Assembly
     renderable = None
-    if hasattr(result, 'val') and callable(result.val):
+    
+    # Case 1: Assembly - can be rendered directly by cadquery.vis
+    if hasattr(result, 'toCompound') and hasattr(result, 'children'):
         renderable = result
-    elif hasattr(result, 'toCompound'):
-        try:
-            renderable = result.toCompound()
-        except Exception:
-            pass
+    # Case 2: Workplane
+    elif hasattr(result, 'val') and callable(result.val):
+        renderable = result
     
     if renderable is None:
         return None
     
+    # Check if it's an Assembly
+    is_assembly = hasattr(result, 'children') and hasattr(result, 'toCompound')
+    
     try:
-        # Style with tan color and no edges (transparent alpha for edges)
-        styled = style(renderable, color='tan', alpha=1.0, edge_color=(0.1, 0.1, 0.15, 0.0))
+        # For Assembly objects, we can pass them directly to show() 
+        # For Workplane objects, we apply styling
+        if is_assembly:
+            # Assembly can be shown directly - styling might not work on assemblies
+            styled = renderable
+        else:
+            # Style with tan color and no edges (transparent alpha for edges)
+            styled = style(renderable, color='tan', alpha=1.0, edge_color=(0.1, 0.1, 0.15, 0.0))
         
         # Define 4 isometric views from different corners (roll, elevation)
         # These give views from each "corner" of the object
@@ -283,18 +292,23 @@ def _try_export_stl(result, base_id: str = None) -> Optional[str]:
     # Check if result is a CadQuery Workplane or Assembly
     exportable = None
     
-    if hasattr(result, 'val') and callable(result.val):
-        # It's a Workplane - get the solid
+    # Case 1: Assembly - convert to compound for STL export
+    if hasattr(result, 'toCompound') and hasattr(result, 'children'):
+        try:
+            # STL export requires a compound, not an assembly
+            exportable = result.toCompound()
+            logger.info("Converted Assembly to Compound for STL export")
+        except Exception as e:
+            logger.warning(f"Failed to convert assembly to compound: {e}")
+    # Case 2: Workplane - export directly
+    elif hasattr(result, 'val') and callable(result.val):
         try:
             exportable = result
         except Exception:
             pass
-    elif hasattr(result, 'toCompound'):
-        # It's an Assembly
-        try:
-            exportable = result.toCompound()
-        except Exception:
-            pass
+    # Case 3: Compound - can also be exported
+    elif hasattr(result, 'Solids'):
+        exportable = result
     
     if exportable is None:
         return None

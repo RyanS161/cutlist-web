@@ -29,7 +29,11 @@ function TestResultCard({ test }: { test: TestResultItem }) {
     return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   };
   
-  const formatDimensions = (dims: Record<string, number>) => {
+  const formatDimensions = (dims: number[] | Record<string, number>) => {
+    // Handle both array format [smallest, middle, largest] and legacy dict format
+    if (Array.isArray(dims)) {
+      return `${dims[0]}×${dims[1]}×${dims[2]}mm`;
+    }
     return `${dims.x}×${dims.y}×${dims.z}mm`;
   };
   
