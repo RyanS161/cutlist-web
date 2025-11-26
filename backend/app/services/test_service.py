@@ -470,24 +470,24 @@ def test_parts_in_library(result) -> TestResult:
         if classification['type'] == 'beam_28x28':
             if not classification['valid_length']:
                 violations.append(
-                    f"Part '{name}' (#{i+1}): 28x28 beam length {classification['length']:.1f}mm "
+                    f"Part '{name}': 28x28 beam length {classification['length']:.1f}mm "
                     f"is not in valid range (100-500mm, 50mm increments)"
                 )
         elif classification['type'] == 'beam_48x24':
             if not classification['valid_length']:
                 violations.append(
-                    f"Part '{name}' (#{i+1}): 48x24 beam length {classification['length']:.1f}mm "
+                    f"Part '{name}': 48x24 beam length {classification['length']:.1f}mm "
                     f"is not in valid range (100-500mm, 50mm increments)"
                 )
         elif classification['type'] == 'plywood':
             if not classification['valid_size']:
                 violations.append(
-                    f"Part '{name}' (#{i+1}): Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
+                    f"Part '{name}': Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
                     f"exceeds maximum 500x500mm"
                 )
         elif classification['type'] == 'unknown':
             violations.append(
-                f"Part '{name}' (#{i+1}): Unrecognized part with dimensions "
+                f"Part '{name}': Unrecognized part with dimensions "
                 f"{classification['dimensions'][0]:.1f}x{classification['dimensions'][1]:.1f}x{classification['dimensions'][2]:.1f}mm"
             )
     

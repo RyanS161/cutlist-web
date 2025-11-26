@@ -562,6 +562,16 @@
   min-height: 0;
 }
 
+.assembly-gif-image {
+  width: 100%;
+  max-width: 500px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+}
+
 .stl-loading {
   display: flex;
   align-items: center;

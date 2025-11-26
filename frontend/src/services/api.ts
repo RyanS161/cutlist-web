@@ -119,6 +119,7 @@ export interface ExecuteCodeResult {
   result?: string;
   stl_url?: string;
   views_url?: string;
+  assembly_gif_url?: string;
 }
 
 /**

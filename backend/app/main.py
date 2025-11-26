@@ -106,6 +106,7 @@ class ExecuteCodeResponse(BaseModel):
     result: Optional[str] = None
     stl_url: Optional[str] = None
     views_url: Optional[str] = None
+    assembly_gif_url: Optional[str] = None
 
 
 class ReviewDesignRequest(BaseModel):
@@ -161,15 +162,27 @@ async def get_svg_file(filename: str):
 
 @app.get("/api/img/{filename}")
 async def get_image_file(filename: str):
-    """Serve a rendered PNG image."""
+    """Serve a rendered PNG or GIF image."""
     file_path = SVG_DIR / filename  # Reusing SVG_DIR for images
-    if not file_path.exists() or not filename.endswith('.png'):
-        raise HTTPException(status_code=404, detail="Image file not found")
-    return FileResponse(
-        file_path,
-        media_type="image/png",
-        headers={"Content-Disposition": f"inline; filename={filename}"}
-    )
+    
+    if filename.endswith('.png'):
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Image file not found")
+        return FileResponse(
+            file_path,
+            media_type="image/png",
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
+    elif filename.endswith('.gif'):
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="GIF file not found")
+        return FileResponse(
+            file_path,
+            media_type="image/gif",
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Unsupported image format")
 
 
 def _try_render_views(result, base_id: str) -> Optional[str]:
@@ -245,6 +258,7 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
                 trihedron=False,
                 edges=False,  # Disable edge rendering
                 bgcolor=(0.1, 0.1, 0.15),  # Dark background
+                specular=False,  # Disable specular highlights
             )
         
         # Create combined 2x2 grid image
@@ -275,6 +289,129 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         
     except Exception as e:
         logger.error(f"Failed to render views: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
+    """Render an animated GIF showing parts being assembled one by one.
+    
+    Returns the URL to access the GIF file, or None if not an Assembly object.
+    """
+    try:
+        from cadquery.vis import show
+        from PIL import Image
+    except ImportError as e:
+        logger.warning(f"Required modules not available for GIF rendering: {e}")
+        return None
+    
+    cq = _cached_modules.get("cq")
+    if cq is None:
+        return None
+    
+    # Only works for Assembly objects with children
+    if not hasattr(result, 'children') or not hasattr(result, 'objects'):
+        return None
+    
+    # Get the objects dict (name -> Assembly node)
+    objects_dict = getattr(result, 'objects', None)
+    if not objects_dict or not isinstance(objects_dict, dict):
+        return None
+    
+    part_names = list(objects_dict.keys())
+    num_parts = len(part_names)
+    
+    if num_parts < 2:
+        return None  # No point in animating a single part
+    
+    logger.info(f"Generating assembly GIF with {num_parts} parts")
+    
+    try:
+        frames = []
+        temp_files = []
+        
+        # Generate a frame for each step of assembly
+        for i in range(num_parts):
+            temp_assem = cq.Assembly()
+            
+            # Add all parts, with future parts semi-transparent
+            for j, part_name in enumerate(part_names):
+                part_asm = objects_dict[part_name]
+                part_obj = getattr(part_asm, 'obj', None)
+                part_loc = getattr(part_asm, 'loc', None)
+                
+                if part_obj is None:
+                    continue
+                
+                # Parts already assembled are solid, future parts are transparent
+                if j > i:
+                    color = cq.Color(0.86, 0.76, 0.62, a=0.15)
+                else:
+                    color = cq.Color(0.86, 0.76, 0.62, a=1.0)
+                
+                temp_assem.add(part_obj, name=part_name, loc=part_loc, color=color)
+            
+            # Render this frame
+            temp_filename = f"{base_id}_frame_{i:03d}.png"
+            temp_path = SVG_DIR / temp_filename
+            temp_files.append(temp_path)
+            
+            show(
+                temp_assem,
+                width=500,
+                height=500,
+                screenshot=str(temp_path),
+                roll=-35,
+                elevation=-60,
+                zoom=1.5,
+                interact=False,
+                trihedron=False,
+                edges=False,
+                bgcolor=(0.1, 0.1, 0.15),
+                specular=False,
+            )
+        
+        # Load frames and create GIF
+        for temp_path in temp_files:
+            img = Image.open(temp_path)
+            frames.append(img.copy())
+            img.close()
+        
+        # Add a longer pause on the final frame (duplicate it a few times)
+        if frames:
+            for _ in range(3):
+                frames.append(frames[-1].copy())
+        
+        # Save as animated GIF
+        gif_filename = f"{base_id}_assembly.gif"
+        gif_path = SVG_DIR / gif_filename
+        
+        if frames:
+            frames[0].save(
+                gif_path,
+                save_all=True,
+                append_images=frames[1:],
+                duration=400,  # 400ms per frame
+                loop=0,  # Loop forever
+            )
+        
+        # Clean up temp files
+        for temp_path in temp_files:
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        
+        # Clean up frame images
+        for frame in frames:
+            frame.close()
+        
+        logger.info(f"Rendered assembly GIF to {gif_path}")
+        return f"/api/img/{gif_filename}"
+        
+    except Exception as e:
+        logger.error(f"Failed to render assembly GIF: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -372,6 +509,7 @@ async def execute_code(request: ExecuteCodeRequest):
         # Try to export result as STL and render views if it's a CadQuery object
         stl_url = None
         views_url = None
+        assembly_gif_url = None
         result_str = None
         
         if result is not None:
@@ -383,6 +521,8 @@ async def execute_code(request: ExecuteCodeRequest):
                 result_str = "CadQuery model exported to STL"
                 # Also render combined PNG views from different angles
                 views_url = _try_render_views(result, base_id)
+                # Generate assembly animation GIF for Assembly objects
+                assembly_gif_url = _try_render_assembly_gif(result, base_id)
             else:
                 try:
                     result_str = repr(result)
@@ -398,6 +538,7 @@ async def execute_code(request: ExecuteCodeRequest):
             result=result_str,
             stl_url=stl_url,
             views_url=views_url,
+            assembly_gif_url=assembly_gif_url,
         )
         
     except SyntaxError as e:

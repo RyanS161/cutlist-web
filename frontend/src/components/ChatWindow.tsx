@@ -76,6 +76,7 @@ export function ChatWindow() {
         result: result.result,
         stlUrl: result.stl_url,
         viewsUrl: result.views_url,
+        assemblyGifUrl: result.assembly_gif_url,
       });
     } catch (err) {
       setExecutionResult({
@@ -156,7 +157,7 @@ Please analyze the failures and update the code to fix them.`;
 
   // Handle error review request from output panel
   const handleReviewError = useCallback((error: string, _code: string) => {
-    const message = `I got the following error when running the code. Please fix it:
+    const message = `I got the following error when running the code:
 
 \`\`\`
 ${error}
@@ -175,9 +176,25 @@ Please analyze the error and update the code to fix it.`;
       .finally(() => setIsLoadingPrompt(false));
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track if user is near bottom of chat for smart auto-scroll
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    // Consider "near bottom" if within 150px of the bottom
+    const threshold = 150;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < threshold;
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive, but only if user is near bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   // Focus input on mount or when chat starts
@@ -262,14 +279,18 @@ Please analyze the error and update the code to fix it.`;
             </div>
           </div>
         ) : (
-          <div className="messages-container">
+          <div 
+            className="messages-container"
+            ref={messagesContainerRef}
+            onScroll={handleScroll}
+          >
             {messages.map((message, index) => (
               <div
                 key={index}
                 className={`message ${message.role === 'user' ? 'user-message' : 'model-message'}`}
               >
                 <div className="message-role">
-                  {message.role === 'user' ? 'You' : 'AI'}
+                  {message.role === 'user' ? 'You' : 'Designer Agent'}
                 </div>
                 <div className="message-content">
                   {message.content ? (
@@ -298,7 +319,7 @@ Please analyze the error and update the code to fix it.`;
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={chatStarted 
-              ? "Describe your woodworking design... (Enter to send)"
+              ? "Chat with the designer..."
               : "Describe what you want to build..."
             }
             disabled={isStreaming || isReviewing || isLoadingPrompt}

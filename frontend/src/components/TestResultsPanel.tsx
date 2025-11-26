@@ -104,7 +104,7 @@ export function TestResultsPanel({
   return (
     <div className="test-results-panel">
       <div className="test-panel-header">
-        <h4>Test Suite</h4>
+        <h4>Assembly Test Suite</h4>
         {isRunning && <span className="test-running-indicator">Running...</span>}
       </div>
       

@@ -134,6 +134,7 @@ export interface ExecutionResult {
   result?: string;
   stlUrl?: string;
   viewsUrl?: string;
+  assemblyGifUrl?: string;
 }
 
 interface CodePanelProps {
@@ -229,7 +230,7 @@ export function CodePanel({
         skipped: 0,
         errors: 1,
         tests: [{
-          name: 'Test Suite',
+          name: 'Assembly Test Suite',
           status: 'error',
           message: err instanceof Error ? err.message : 'Failed to run tests',
         }],
@@ -487,6 +488,16 @@ export function CodePanel({
                               src={executionResult.viewsUrl} 
                               alt="Model views from 4 angles" 
                               className="combined-views-image"
+                            />
+                          </div>
+                        )}
+                        {executionResult?.assemblyGifUrl && (
+                          <div className="views-container">
+                            <div className="viewer-label">Assembly Animation</div>
+                            <img 
+                              src={executionResult.assemblyGifUrl} 
+                              alt="Assembly animation showing parts being added" 
+                              className="assembly-gif-image"
                             />
                           </div>
                         )}
