@@ -17,7 +17,7 @@ class Settings:
         self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
         self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.host: str = os.getenv("HOST", "0.0.0.0")
-        self.port: int = int(os.getenv("PORT", "8000"))
+        self.port: int = int(os.getenv("PORT", "8080"))
         
         # Load system prompts from config files
         self.system_prompt: str = self._load_system_prompt()

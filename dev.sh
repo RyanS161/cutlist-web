@@ -31,9 +31,9 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Start backend
-echo -e "${GREEN}Starting FastAPI backend on http://localhost:8000...${NC}"
+echo -e "${GREEN}Starting FastAPI backend on http://localhost:8080...${NC}"
 cd backend
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8080 &
 BACKEND_PID=$!
 cd ..
 
@@ -49,8 +49,8 @@ cd ..
 
 echo -e "${GREEN}Both servers are running!${NC}"
 echo -e "  Frontend: ${GREEN}http://localhost:5173${NC}"
-echo -e "  Backend:  ${GREEN}http://localhost:8000${NC}"
-echo -e "  API Docs: ${GREEN}http://localhost:8000/docs${NC}"
+echo -e "  Backend:  ${GREEN}http://localhost:8080${NC}"
+echo -e "  API Docs: ${GREEN}http://localhost:8080/docs${NC}"
 echo -e "\nPress Ctrl+C to stop both servers."
 
 # Wait for both processes

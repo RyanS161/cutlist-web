@@ -195,10 +195,11 @@ async def get_image_file(filename: str):
 def _try_render_views(result, base_id: str) -> Optional[str]:
     """Render a combined 2x2 grid PNG image of a CadQuery object from 4 different isometric views.
     
+    Uses PyVista for headless STL-based rendering.
     Returns the URL to access the combined PNG file, or None if not a CadQuery object.
     """
     try:
-        from cadquery.vis import show, style
+        import pyvista as pv
         from PIL import Image
     except ImportError as e:
         logger.warning(f"Required modules not available for rendering: {e}")
@@ -209,68 +210,75 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         return None
     
     # Check if result is a CadQuery Workplane or Assembly
-    renderable = None
+    exportable = None
     
-    # Case 1: Assembly - can be rendered directly by cadquery.vis
+    # Case 1: Assembly - convert to compound for STL export
     if hasattr(result, 'toCompound') and hasattr(result, 'children'):
-        renderable = result
+        try:
+            exportable = result.toCompound()
+        except Exception as e:
+            logger.warning(f"Failed to convert assembly to compound: {e}")
+            return None
     # Case 2: Workplane
     elif hasattr(result, 'val') and callable(result.val):
-        renderable = result
+        exportable = result
     
-    if renderable is None:
+    if exportable is None:
         return None
     
-    # Check if it's an Assembly
-    is_assembly = hasattr(result, 'children') and hasattr(result, 'toCompound')
-    
     try:
-        # For Assembly objects, we can pass them directly to show() 
-        # For Workplane objects, we apply styling
-        if is_assembly:
-            # Assembly can be shown directly - styling might not work on assemblies
-            styled = renderable
-        else:
-            # Style with tan color and no edges (transparent alpha for edges)
-            styled = style(renderable, color='tan', alpha=1.0, edge_color=(0.1, 0.1, 0.15, 0.0))
+        # Export to temporary STL file
+        temp_stl = SVG_DIR / f"{base_id}_temp.stl"
+        cq.exporters.export(exportable, str(temp_stl))
         
-        # Define 4 isometric views from different corners (roll, elevation)
+        # Load STL with PyVista
+        mesh = pv.read(str(temp_stl))
+        
+        # Clean up temp STL
+        temp_stl.unlink()
+        
+        # Configure PyVista for offscreen rendering
+        pv.OFF_SCREEN = True
+        pv.global_theme.allow_empty_mesh = True
+        
+        # Define 4 isometric camera positions (azimuth, elevation)
         # These give views from each "corner" of the object
         views = [
-            ("Front-Right", -35, -60),    # Front-right isometric
-            ("Front-Left", 35, -60),      # Front-left isometric  
-            ("Back-Right", -145, -60),    # Back-right isometric
-            ("Back-Left", 145, -60),      # Back-left isometric
+            ("Back-Right", 0, 0),
+            ("Back-Left", 90, 0),
+            ("Front-Right", 180, 0),
+            ("Front-Left", 270, 0),
         ]
         
         view_size = 400
         temp_files = []
         
-        # Render each view to a temporary file
-        for view_name, roll, elevation in views:
+        # Dark background color matching website
+        bg_color = [0.1, 0.1, 0.15]
+        
+        # Render each view
+        for view_name, azimuth, elevation in views:
             temp_filename = f"{base_id}_{view_name.lower().replace('-', '_')}_temp.png"
             temp_path = SVG_DIR / temp_filename
             temp_files.append((view_name, temp_path))
             
-            # Render with perspective view - no edges
-            show(
-                styled,
-                width=view_size,
-                height=view_size,
-                screenshot=str(temp_path),
-                roll=roll,
-                elevation=elevation,
-                zoom=1.5,
-                interact=False,
-                trihedron=False,
-                edges=False,  # Disable edge rendering
-                bgcolor=(0.1, 0.1, 0.15),  # Dark background
-                specular=False,  # Disable specular highlights
-            )
+            # Create plotter with clean settings
+            plotter = pv.Plotter(off_screen=True, window_size=[view_size, view_size])
+            plotter.add_mesh(mesh, color='tan', opacity=1.0)
+            plotter.set_background(bg_color)
+            plotter.camera_position = 'iso'
+            plotter.camera.azimuth = azimuth
+            plotter.camera.elevation = elevation
+            plotter.reset_camera()
+            plotter.camera.zoom(1.0)
+            
+            # Save screenshot
+            plotter.screenshot(str(temp_path))
+            plotter.close()
         
         # Create combined 2x2 grid image
         grid_size = view_size * 2
-        combined = Image.new('RGB', (grid_size, grid_size), color=(26, 26, 46))
+        combined = Image.new('RGB', (grid_size, grid_size), color=(26, 26, 38))
         
         # Positions for 2x2 grid: top-left, top-right, bottom-left, bottom-right
         positions = [(0, 0), (view_size, 0), (0, view_size), (view_size, view_size)]
@@ -304,10 +312,11 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
 def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
     """Render an animated GIF showing parts being assembled one by one.
     
+    Uses PyVista for headless STL-based rendering.
     Returns the URL to access the GIF file, or None if not an Assembly object.
     """
     try:
-        from cadquery.vis import show
+        import pyvista as pv
         from PIL import Image
     except ImportError as e:
         logger.warning(f"Required modules not available for GIF rendering: {e}")
@@ -335,49 +344,90 @@ def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
     logger.info(f"Generating assembly GIF with {num_parts} parts")
     
     try:
+        # Configure PyVista for offscreen rendering
+        pv.OFF_SCREEN = True
+        
+        # Pre-export all parts to temporary STL files and load as meshes
+        part_meshes = {}
+        part_stl_files = []
+        
+        for part_name in part_names:
+            part_asm = objects_dict[part_name]
+            part_obj = getattr(part_asm, 'obj', None)
+            part_loc = getattr(part_asm, 'loc', None)
+            
+            if part_obj is None:
+                continue
+            
+            # Apply location transform if present
+            if part_loc is not None:
+                try:
+                    transformed = part_obj.val().located(part_loc)
+                    export_obj = cq.Workplane().add(transformed)
+                except Exception:
+                    export_obj = part_obj
+            else:
+                export_obj = part_obj
+            
+            # Export to temporary STL
+            tmp_path = SVG_DIR / f"{base_id}_{part_name}_temp.stl"
+            part_stl_files.append(tmp_path)
+            
+            try:
+                cq.exporters.export(export_obj, str(tmp_path))
+                mesh = pv.read(str(tmp_path))
+                part_meshes[part_name] = mesh
+            except Exception as e:
+                logger.warning(f"Failed to export part {part_name}: {e}")
+                continue
+        
         frames = []
         temp_files = []
         
+        # Dark background color matching website
+        bg_color = [0.1, 0.1, 0.15]
+        
         # Generate a frame for each step of assembly
         for i in range(num_parts):
-            temp_assem = cq.Assembly()
+            plotter = pv.Plotter(off_screen=True, window_size=[500, 500])
+            plotter.set_background(bg_color)
             
-            # Add all parts, with future parts semi-transparent
+            # Add parts up to current step
             for j, part_name in enumerate(part_names):
-                part_asm = objects_dict[part_name]
-                part_obj = getattr(part_asm, 'obj', None)
-                part_loc = getattr(part_asm, 'loc', None)
-                
-                if part_obj is None:
+                if part_name not in part_meshes:
                     continue
+                
+                mesh = part_meshes[part_name]
                 
                 # Parts already assembled are solid, future parts are transparent
                 if j > i:
-                    color = cq.Color(0.86, 0.76, 0.62, a=0.15)
+                    opacity = 0.15
                 else:
-                    color = cq.Color(0.86, 0.76, 0.62, a=1.0)
+                    opacity = 1.0
                 
-                temp_assem.add(part_obj, name=part_name, loc=part_loc, color=color)
+                plotter.add_mesh(mesh, color='tan', opacity=opacity)
+            
+            # Set camera position
+            plotter.camera_position = 'iso'
+            plotter.camera.azimuth = 180
+            plotter.camera.elevation = 0
+            plotter.reset_camera()
+            plotter.camera.zoom(1.0)
             
             # Render this frame
             temp_filename = f"{base_id}_frame_{i:03d}.png"
             temp_path = SVG_DIR / temp_filename
             temp_files.append(temp_path)
             
-            show(
-                temp_assem,
-                width=500,
-                height=500,
-                screenshot=str(temp_path),
-                roll=-35,
-                elevation=-60,
-                zoom=1.5,
-                interact=False,
-                trihedron=False,
-                edges=False,
-                bgcolor=(0.1, 0.1, 0.15),
-                specular=False,
-            )
+            plotter.screenshot(str(temp_path))
+            plotter.close()
+        
+        # Clean up temporary STL files
+        for stl_path in part_stl_files:
+            try:
+                stl_path.unlink()
+            except Exception:
+                pass
         
         # Load frames and create GIF
         for temp_path in temp_files:

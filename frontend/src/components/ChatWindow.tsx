@@ -371,6 +371,13 @@ Please analyze the error and update the code to fix it.`;
             >
               The letters ETH
             </button>
+            <button 
+              className="quick-prompt-btn"
+              onClick={() => sendMessage("The letter T")}
+              disabled={isLoadingPrompt}
+            >
+              The letter T
+            </button>
           </div>
         )}
       </div>

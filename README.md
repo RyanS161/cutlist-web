@@ -83,7 +83,7 @@ Terminal 1 (Backend):
 ```bash
 cd backend
 source venv/bin/activate
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8080
 ```
 
 Terminal 2 (Frontend):
@@ -95,7 +95,7 @@ npm run dev
 ### 5. Open the App
 
 - Frontend: http://localhost:5173
-- Backend API docs: http://localhost:8000/docs
+- Backend API docs: http://localhost:8080/docs
 
 ## Configuration
 
@@ -110,7 +110,7 @@ Edit `backend/config/system_prompt.txt` to customize the AI's behavior and perso
 | `GEMINI_API_KEY` | Google Gemini API key | Required |
 | `GEMINI_MODEL` | Gemini model to use | `gemini-2.5-flash` |
 | `HOST` | Backend host | `0.0.0.0` |
-| `PORT` | Backend port | `8000` |
+| `PORT` | Backend port | `8080` |
 
 ## Deployment
 
@@ -226,7 +226,7 @@ The backend is configured to allow requests from `localhost:5173` and `localhost
 ### Streaming Not Working
 1. Check browser console for errors
 2. Verify the Vite proxy is configured correctly
-3. Test the backend directly: `curl -X POST http://localhost:8000/api/chat/stream -H "Content-Type: application/json" -d '{"message": "hi"}'`
+3. Test the backend directly: `curl -X POST http://localhost:8080/api/chat/stream -H "Content-Type: application/json" -d '{"message": "hi"}'`
 
 ### API Key Issues
 1. Verify your API key at [Google AI Studio](https://aistudio.google.com)
