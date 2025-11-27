@@ -504,6 +504,28 @@
   flex-direction: column;
 }
 
+.stl-viewer-loading {
+  height: 300px;
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.stl-viewer-loading .loading-spinner {
+  font-size: 24px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .stl-viewer-container canvas {
   width: 100% !important;
   height: 100% !important;

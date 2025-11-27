@@ -1,125 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
 import 'highlight.js/styles/github-dark.css';
 import './CodePanel.css';
-import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import * as THREE from 'three';
 import { runTests, type TestSuiteResult } from '../services/api';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ActionsPanel } from './ActionsPanel';
 
-// STL Model component that loads and displays the model
-function StlModel({ url }: { url: string }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
-  const { camera } = useThree();
+// Lazy load the heavy Three.js STL viewer
+const StlViewer = lazy(() => import('./StlViewer'));
 
-  useEffect(() => {
-    const loader = new STLLoader();
-    loader.load(url, (geo) => {
-      geo.computeVertexNormals();
-      geo.center();
-      setGeometry(geo);
-
-      // Auto-fit camera to model
-      geo.computeBoundingBox();
-      if (geo.boundingBox) {
-        const box = geo.boundingBox;
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const distance = maxDim * 2.5;
-        
-        camera.position.set(distance, distance, distance);
-        camera.lookAt(0, 0, 0);
-        
-        // Adjust clipping planes based on model size
-        if (camera instanceof THREE.PerspectiveCamera) {
-          camera.near = maxDim * 0.01;
-          camera.far = maxDim * 100;
-          camera.updateProjectionMatrix();
-        }
-      }
-    });
-  }, [url, camera]);
-
-  if (!geometry) {
-    return null;
-  }
-
+// Loading fallback for the 3D viewer
+function StlViewerLoading() {
   return (
-    <mesh ref={meshRef} geometry={geometry}>
-      <meshStandardMaterial 
-        color="#D2B48C" 
-        roughness={0.4} 
-        metalness={0.3}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    <div className="stl-viewer-loading">
+      <span className="loading-spinner">⟳</span>
+      <span>Loading 3D viewer...</span>
+    </div>
   );
-}
-
-// Axis helper component showing X (red), Y (green), Z (blue) arrows at origin
-function AxisHelper({ size = 50 }: { size?: number }) {
-  return (
-    <group>
-      {/* X axis - Red */}
-      <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), size, 0xff0000, size * 0.15, size * 0.08]} />
-      {/* Y axis - Green */}
-      <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), size, 0x00ff00, size * 0.15, size * 0.08]} />
-      {/* Z axis - Blue */}
-      <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), size, 0x0000ff, size * 0.15, size * 0.08]} />
-      {/* Origin sphere */}
-      <mesh position={[0, 0, 0]}>
-        <sphereGeometry args={[size * 0.03, 16, 16]} />
-        <meshBasicMaterial color={0xffffff} />
-      </mesh>
-    </group>
-  );
-}
-
-// Wrapper component with error handling for the STL viewer
-function StlViewer({ url }: { url: string }) {
-  const [error, setError] = useState<string | null>(null);
-
-  if (error) {
-    return (
-      <div className="stl-error">
-        <p>Failed to load 3D model</p>
-        <p className="stl-error-detail">{error}</p>
-      </div>
-    );
-  }
-
-  return (
-    <Canvas
-      camera={{ position: [100, 100, 100], fov: 50, near: 0.1, far: 10000 }}
-      style={{ height: '300px', background: '#1a1a2e' }}
-      onError={() => setError('Failed to initialize 3D viewer')}
-    >
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[10, 10, 10]} intensity={1} />
-      <directionalLight position={[-10, -10, -10]} intensity={0.5} />
-      <directionalLight position={[0, 10, 0]} intensity={0.3} />
-      <ErrorBoundary3D>
-        <StlModel url={url} />
-      </ErrorBoundary3D>
-      <AxisHelper />
-      <OrbitControls enableDamping dampingFactor={0.1} />
-    </Canvas>
-  );
-}
-
-// Simple error boundary for 3D content (placeholder for future enhancement)
-function ErrorBoundary3D({ 
-  children, 
-}: { 
-  children: React.ReactNode; 
-}) {
-  return <>{children}</>;
 }
 
 // Register Python language
@@ -487,7 +385,9 @@ export function CodePanel({
                               ⬇ Download STL
                             </a>
                           </div>
-                          <StlViewer url={executionResult.stlUrl} />
+                          <Suspense fallback={<StlViewerLoading />}>
+                            <StlViewer url={executionResult.stlUrl} />
+                          </Suspense>
                         </div>
                         {executionResult?.viewsUrl && (
                           <div className="views-container">
