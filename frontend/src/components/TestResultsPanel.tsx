@@ -48,6 +48,18 @@ function TestResultCard({ test }: { test: TestResultItem }) {
     return formatPartType(type);
   };
   
+  const isPartValid = (classification: Record<string, unknown>) => {
+    const type = classification.type as string;
+    if (type === 'unknown') return false;
+    if (type === 'beam_28x28' || type === 'beam_48x24') {
+      return classification.valid_length === true;
+    }
+    if (type === 'plywood') {
+      return classification.valid_size === true;
+    }
+    return true;
+  };
+  
   return (
     <div className={`test-card ${test.status}`}>
       <div className="test-card-header">
@@ -83,13 +95,16 @@ function TestResultCard({ test }: { test: TestResultItem }) {
         <div className="test-parts-list">
           <div className="parts-header">Parts Found ({test.details!.parts!.length}):</div>
           <div className="parts-table">
-            {test.details!.parts!.map((part) => (
-              <div key={part.index} className="part-row">
-                <span className="part-index">#{part.index}</span>
-                <span className="part-type">{getPartDescription(part.classification)}</span>
-                <span className="part-dims">{formatDimensions(part.dimensions)}</span>
-              </div>
-            ))}
+            {test.details!.parts!.map((part) => {
+              const valid = isPartValid(part.classification);
+              return (
+                <div key={part.index} className={`part-row ${valid ? 'part-valid' : 'part-invalid'}`}>
+                  <span className="part-index">#{part.index}</span>
+                  <span className="part-type">{getPartDescription(part.classification)}</span>
+                  <span className="part-dims">{formatDimensions(part.dimensions)}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

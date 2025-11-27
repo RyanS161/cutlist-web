@@ -1,24 +1,32 @@
 """FastAPI backend for Gemini chat application."""
 
 import io
+import ast
+import time
 import uuid
 import traceback
 import logging
 from pathlib import Path
 from contextlib import redirect_stdout, redirect_stderr, asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette import EventSourceResponse
 from pydantic import BaseModel
 from typing import List, Optional
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from .services.gemini_service import get_gemini_service
 from .services.test_service import run_test_suite
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Global cache for pre-imported modules
 _cached_modules: dict = {}
@@ -30,6 +38,109 @@ STL_DIR.mkdir(exist_ok=True)
 # Directory for SVG files
 SVG_DIR = Path(__file__).parent.parent / "model_images"
 SVG_DIR.mkdir(exist_ok=True)
+
+# File TTL in seconds (30 minutes)
+FILE_TTL_SECONDS = 30 * 60
+
+
+def _cleanup_old_files():
+    """Delete files older than FILE_TTL_SECONDS from STL and image directories."""
+    current_time = time.time()
+    deleted_count = 0
+    
+    for directory in [STL_DIR, SVG_DIR]:
+        try:
+            for file_path in directory.iterdir():
+                if file_path.is_file():
+                    file_age = current_time - file_path.stat().st_mtime
+                    if file_age > FILE_TTL_SECONDS:
+                        file_path.unlink()
+                        deleted_count += 1
+        except Exception as e:
+            logger.warning(f"Error cleaning up files in {directory}: {e}")
+    
+    if deleted_count > 0:
+        logger.info(f"Cleaned up {deleted_count} old files")
+
+
+# Allowed imports for sandboxed code execution
+ALLOWED_IMPORTS = {'cadquery', 'cq', 'math'}
+
+# Blocked builtins that could be dangerous
+BLOCKED_BUILTINS = {
+    'exec', 'eval', 'compile', 'open', 'input',
+    '__import__', 'breakpoint', 'memoryview',
+    'globals', 'locals', 'vars',
+}
+
+
+def _validate_code_safety(code: str) -> tuple[bool, str]:
+    """
+    Validate that code is safe to execute.
+    Returns (is_safe, error_message).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"Syntax error: {e}"
+    
+    for node in ast.walk(tree):
+        # Check for import statements
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name.split('.')[0]
+                if module_name not in ALLOWED_IMPORTS:
+                    return False, f"Import of '{alias.name}' is not allowed. Only cadquery and math imports are permitted."
+        
+        # Check for from ... import statements
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                module_name = node.module.split('.')[0]
+                if module_name not in ALLOWED_IMPORTS:
+                    return False, f"Import from '{node.module}' is not allowed. Only cadquery and math imports are permitted."
+        
+        # Check for dangerous function calls
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id in BLOCKED_BUILTINS:
+                    return False, f"Use of '{node.func.id}' is not allowed for security reasons."
+            # Check for __import__ calls via getattr
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr in BLOCKED_BUILTINS:
+                    return False, f"Use of '{node.func.attr}' is not allowed for security reasons."
+        
+        # Block attribute access to dangerous dunders
+        elif isinstance(node, ast.Attribute):
+            if node.attr in ('__code__', '__globals__', '__builtins__', '__subclasses__', '__bases__', '__mro__'):
+                return False, f"Access to '{node.attr}' is not allowed for security reasons."
+    
+    return True, ""
+
+
+def _create_safe_builtins():
+    """Create a restricted builtins dict without dangerous functions."""
+    import builtins
+    safe_builtins = {}
+    
+    for name in dir(builtins):
+        if name not in BLOCKED_BUILTINS and not name.startswith('_'):
+            safe_builtins[name] = getattr(builtins, name)
+    
+    # Keep some safe dunders
+    safe_builtins['__name__'] = '__main__'
+    safe_builtins['__doc__'] = None
+    
+    # Create a safe __import__ that only allows whitelisted modules
+    def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        # Get the top-level module name
+        top_level = name.split('.')[0]
+        if top_level not in ALLOWED_IMPORTS:
+            raise ImportError(f"Import of '{name}' is not allowed. Only cadquery and math imports are permitted.")
+        return builtins.__import__(name, globals, locals, fromlist, level)
+    
+    safe_builtins['__import__'] = safe_import
+    
+    return safe_builtins
 
 
 @asynccontextmanager
@@ -64,7 +175,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for local development
+# Add rate limiter to app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Configure CORS for local development and production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -72,6 +187,8 @@ app.add_middleware(
         "http://localhost:3000",  # Alternative dev port
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "https://cutlist-web.web.app",  # Firebase Hosting
+        "https://cutlist-web.firebaseapp.com",  # Firebase Hosting alt
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -525,23 +642,36 @@ def _try_export_stl(result, base_id: str = None) -> Optional[str]:
 
 
 @app.post("/api/execute", response_model=ExecuteCodeResponse)
-async def execute_code(request: ExecuteCodeRequest):
+@limiter.limit("30/minute")
+async def execute_code(request: Request, code_request: ExecuteCodeRequest):
     """Execute Python code and return the result.
     
-    Executes the code in a restricted environment and captures
+    Executes the code in a sandboxed environment and captures
     stdout, stderr, and the final expression result.
     If the result is a CadQuery object, exports it as STL.
     """
-    code = request.code
+    # Clean up old files on each request
+    _cleanup_old_files()
+    
+    code = code_request.code
+    
+    # Validate code safety before execution
+    is_safe, error_msg = _validate_code_safety(code)
+    if not is_safe:
+        return ExecuteCodeResponse(
+            success=False,
+            output="",
+            error=f"Security error: {error_msg}"
+        )
     
     # Capture stdout and stderr
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
     
-    # Create globals dict with pre-cached modules
+    # Create globals dict with safe builtins and pre-cached modules
     exec_globals = {
-        "__builtins__": __builtins__,
-        **_cached_modules,  # Use pre-imported modules
+        "__builtins__": _create_safe_builtins(),
+        **_cached_modules,  # Use pre-imported modules (cq, math, etc.)
     }
     
     result = None
@@ -614,7 +744,8 @@ async def execute_code(request: ExecuteCodeRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
+@limiter.limit("60/minute")
+async def chat_stream(request: Request, chat_request: ChatRequest):
     """Stream a chat response from Gemini.
     
     Accepts a message and optional conversation history,
@@ -624,16 +755,16 @@ async def chat_stream(request: ChatRequest):
     
     # Convert history to dict format
     history = []
-    if request.history:
-        history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    if chat_request.history:
+        history = [{"role": msg.role, "content": msg.content} for msg in chat_request.history]
     
     # Prepare message with current code context if available
-    message_with_context = request.message
-    if request.current_code:
-        message_with_context = f"[CURRENT_CODE]\n```python\n{request.current_code}\n```\n[END_CURRENT_CODE]\n\n{request.message}"
+    message_with_context = chat_request.message
+    if chat_request.current_code:
+        message_with_context = f"[CURRENT_CODE]\n```python\n{chat_request.current_code}\n```\n[END_CURRENT_CODE]\n\n{chat_request.message}"
     
     # Use custom system prompt if provided, otherwise use default
-    system_prompt = request.system_prompt
+    system_prompt = chat_request.system_prompt
     
     async def generate():
         """Generate SSE events from Gemini stream."""
@@ -645,17 +776,19 @@ async def chat_stream(request: ChatRequest):
 
 
 @app.post("/api/test")
-async def run_tests(request: TestCodeRequest):
+@limiter.limit("30/minute")
+async def run_tests(request: Request, test_request: TestCodeRequest):
     """Run the test suite on the provided code.
     
     Returns test results including execution check and constraint validation.
     """
-    result = run_test_suite(request.code, _cached_modules)
+    result = run_test_suite(test_request.code, _cached_modules)
     return result.to_dict()
 
 
 @app.post("/api/review/stream")
-async def review_design_stream(request: ReviewDesignRequest):
+@limiter.limit("20/minute")
+async def review_design_stream(request: Request, review_request: ReviewDesignRequest):
     """Stream a design review response from Gemini with an image.
     
     Takes the views URL, loads the image, and asks Gemini to review the design.
@@ -665,7 +798,7 @@ async def review_design_stream(request: ReviewDesignRequest):
     
     # Extract filename from URL and load image
     # URL format: /api/img/model_xxxxx_views.png
-    filename = request.views_url.split('/')[-1]
+    filename = review_request.views_url.split('/')[-1]
     image_path = SVG_DIR / filename
     
     if not image_path.exists():
@@ -676,16 +809,16 @@ async def review_design_stream(request: ReviewDesignRequest):
     
     # Convert history to dict format
     history = []
-    if request.history:
-        history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    if review_request.history:
+        history = [{"role": msg.role, "content": msg.content} for msg in review_request.history]
     
-    system_prompt = request.system_prompt
+    system_prompt = review_request.system_prompt
     
     async def generate():
         """Generate SSE events from Gemini stream."""
         async for chunk in gemini.stream_review_with_image(
             image_data=image_data,
-            current_code=request.current_code,
+            current_code=review_request.current_code,
             history=history,
             system_prompt=system_prompt
         ):
@@ -695,7 +828,8 @@ async def review_design_stream(request: ReviewDesignRequest):
 
 
 @app.post("/api/qa-review/stream")
-async def qa_review_stream(request: QAReviewRequest):
+@limiter.limit("10/minute")
+async def qa_review_stream(request: Request, qa_request: QAReviewRequest):
     """Stream a QA review response from a fresh Gemini agent.
     
     Takes the design image, test results, and user messages,
@@ -707,7 +841,7 @@ async def qa_review_stream(request: QAReviewRequest):
     settings = get_settings()
     
     # Extract filename from URL and load image
-    filename = request.views_url.split('/')[-1]
+    filename = qa_request.views_url.split('/')[-1]
     image_path = SVG_DIR / filename
     
     if not image_path.exists():
@@ -723,8 +857,8 @@ async def qa_review_stream(request: QAReviewRequest):
         """Generate SSE events from Gemini stream."""
         async for chunk in gemini.stream_qa_review(
             image_data=image_data,
-            test_results_summary=request.test_results_summary,
-            user_messages=request.user_messages,
+            test_results_summary=qa_request.test_results_summary,
+            user_messages=qa_request.user_messages,
             system_prompt=qa_system_prompt
         ):
             yield {"data": chunk}

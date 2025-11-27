@@ -10,7 +10,7 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "gemini-chat-api",
+          "serviceId": "cutlist-api",
           "region": "us-central1"
         }
       },

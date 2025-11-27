@@ -312,6 +312,10 @@ export function CodePanel({
       case 'running':
         return <span className="status-icon running">⟳</span>;
       case 'success':
+        // Show warning icon if tests failed, check if tests passed
+        if (testResults && !testResults.success) {
+          return <span className="status-icon warning">⚠</span>;
+        }
         return <span className="status-icon success">✓</span>;
       case 'error':
         return <span className="status-icon error">✗</span>;
@@ -537,12 +541,18 @@ export function CodePanel({
             onReviewTestResults={handleReviewTestResults}
             onQAReview={() => {
               if (executionResult?.viewsUrl && testResults && onQAReview) {
-                // Format test results summary for QA agent
-                const failedTests = testResults.tests
+                // Format detailed test results for QA agent (including long_message)
+                const failedTestsDetails = testResults.tests
                   .filter(t => t.status !== 'passed')
-                  .map(t => `- ${t.name}: ${t.message || t.status}`)
-                  .join('\n');
-                const summary = `Tests: ${testResults.passed} passed, ${testResults.failed} failed, ${testResults.errors} errors\n${failedTests ? `Failed:\n${failedTests}` : 'All tests passed.'}`;
+                  .map(t => {
+                    let detail = `- ${t.name}: ${t.message || t.status}`;
+                    if (t.long_message) {
+                      detail += `\n  ${t.long_message.replace(/\n/g, '\n  ')}`;
+                    }
+                    return detail;
+                  })
+                  .join('\n\n');
+                const summary = `Tests: ${testResults.passed} passed, ${testResults.failed} failed, ${testResults.errors} errors\n\n${failedTestsDetails ? `Failed Tests:\n${failedTestsDetails}` : 'All tests passed.'}`;
                 onQAReview(executionResult.viewsUrl, summary);
               }
             }}
