@@ -8,6 +8,7 @@ from enum import Enum
 try:
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_OBB
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
     HAS_OCP = True
 except ImportError:
     HAS_OCP = False
@@ -654,6 +655,236 @@ def test_no_intersections(result) -> TestResult:
     )
 
 
+def _are_parts_connected(solid1, solid2, tolerance=0.1) -> bool:
+    """Check if two solids are connected (distance < tolerance)."""
+    if not HAS_OCP:
+        # Fallback: Check bounding box intersection
+        # This is a loose check, but better than nothing if OCP is missing
+        try:
+            bb1 = solid1.BoundingBox()
+            bb2 = solid2.BoundingBox()
+            
+            # Check for overlap in all dimensions with tolerance
+            overlap_x = (bb1.xmin - tolerance <= bb2.xmax) and (bb1.xmax + tolerance >= bb2.xmin)
+            overlap_y = (bb1.ymin - tolerance <= bb2.ymax) and (bb1.ymax + tolerance >= bb2.ymin)
+            overlap_z = (bb1.zmin - tolerance <= bb2.zmax) and (bb1.zmax + tolerance >= bb2.zmin)
+            
+            return overlap_x and overlap_y and overlap_z
+        except Exception:
+            return False
+
+    try:
+        # Use OCP to calculate minimum distance
+        shape1 = solid1.wrapped if hasattr(solid1, 'wrapped') else solid1
+        shape2 = solid2.wrapped if hasattr(solid2, 'wrapped') else solid2
+        
+        dist_calc = BRepExtrema_DistShapeShape(shape1, shape2)
+        dist_calc.Perform()
+        
+        if dist_calc.IsDone():
+            min_dist = dist_calc.Value()
+            return min_dist <= tolerance
+            
+    except Exception as e:
+        logger.warning(f"Distance check failed: {e}")
+        
+    return False
+
+
+def test_connectivity(result: Any) -> TestResult:
+    """Test 5: Check if all parts are connected (no floating parts)."""
+    parts = _extract_solids(result)
+    
+    if not parts:
+        return TestResult(
+            name="Part Connectivity",
+            status=TestStatus.SKIPPED,
+            message="No parts found to test",
+        )
+        
+    if len(parts) == 1:
+        return TestResult(
+            name="Part Connectivity",
+            status=TestStatus.PASSED,
+            message="Single part is inherently connected",
+        )
+        
+    # Build adjacency graph
+    n = len(parts)
+    adj = [[] for _ in range(n)]
+    
+    # Check all pairs (O(N^2)) - acceptable for small furniture assemblies
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _are_parts_connected(parts[i]['solid'], parts[j]['solid']):
+                adj[i].append(j)
+                adj[j].append(i)
+                
+    # BFS to find connected components
+    visited = [False] * n
+    queue = [0] # Start from first part
+    visited[0] = True
+    
+    while queue:
+        u = queue.pop(0)
+        for v in adj[u]:
+            if not visited[v]:
+                visited[v] = True
+                queue.append(v)
+                
+    # Check if all visited
+    if all(visited):
+        return TestResult(
+            name="Part Connectivity",
+            status=TestStatus.PASSED,
+            message=f"All {n} parts are connected",
+            details={'component_count': 1}
+        )
+    else:
+        # Identify disconnected parts
+        disconnected_indices = [i for i, v in enumerate(visited) if not v]
+        disconnected_names = [parts[i]['name'] for i in disconnected_indices]
+        
+        return TestResult(
+            name="Part Connectivity",
+            status=TestStatus.FAILED,
+            message=f"Found {len(disconnected_names)} detached part(s)",
+            long_message="The following parts are not connected to the main assembly (starting from first part):\n" + "\n".join(disconnected_names),
+            details={
+                'disconnected_parts': disconnected_names,
+            }
+        )
+
+
+def test_static_stability(result: Any) -> TestResult:
+    """
+    Test 4: Check for static stability using Geometric Analysis.
+    
+    Calculates the Center of Mass (CoM) of the assembly and checks
+    if its projection onto the ground lies within the support base.
+    """
+    try:
+        # Extract solids
+        parts = _extract_solids(result)
+        if not parts:
+            return TestResult(
+                name="Static Stability",
+                status=TestStatus.SKIPPED,
+                message="No parts found to test",
+            )
+
+        # 1. Calculate Combined Center of Mass (CoM)
+        total_volume = 0.0
+        weighted_center = [0.0, 0.0, 0.0]
+        
+        for part in parts:
+            solid = part['solid']
+            # Assuming uniform density for all parts
+            vol = _get_solid_volume(solid)
+            if vol <= 0:
+                continue
+                
+            center = solid.Center()
+            total_volume += vol
+            weighted_center[0] += center.x * vol
+            weighted_center[1] += center.y * vol
+            weighted_center[2] += center.z * vol
+            
+        if total_volume <= 0:
+             return TestResult(
+                name="Static Stability",
+                status=TestStatus.SKIPPED,
+                message="Could not calculate volume of parts",
+            )
+            
+        com = [
+            weighted_center[0] / total_volume,
+            weighted_center[1] / total_volume,
+            weighted_center[2] / total_volume
+        ]
+        
+        # 2. Find the Base (Support Polygon)
+        # Find the lowest Z coordinate
+        min_z = float('inf')
+        for part in parts:
+            bb = part['solid'].BoundingBox()
+            if bb.zmin < min_z:
+                min_z = bb.zmin
+                
+        # Identify parts that touch the ground (within 1mm tolerance)
+        ground_threshold = min_z + 1.0
+        base_points = []
+        
+        for part in parts:
+            solid = part['solid']
+            bb = solid.BoundingBox()
+            
+            if bb.zmin <= ground_threshold:
+                # This part is touching the ground.
+                # We use its bounding box corners as support points.
+                # This is a simplification; ideally we'd use the exact contact face.
+                base_points.append((bb.xmin, bb.ymin))
+                base_points.append((bb.xmax, bb.ymin))
+                base_points.append((bb.xmin, bb.ymax))
+                base_points.append((bb.xmax, bb.ymax))
+        
+        if not base_points:
+             return TestResult(
+                name="Static Stability",
+                status=TestStatus.FAILED,
+                message="No parts found touching the ground (floating object?)",
+            )
+            
+        # 3. Check if CoM is inside the Support Polygon
+        # We use the Bounding Box of the base points as a robust approximation
+        # for the support polygon. This works well for rectangular furniture.
+        base_min_x = min(p[0] for p in base_points)
+        base_max_x = max(p[0] for p in base_points)
+        base_min_y = min(p[1] for p in base_points)
+        base_max_y = max(p[1] for p in base_points)
+        
+        is_stable_x = base_min_x <= com[0] <= base_max_x
+        is_stable_y = base_min_y <= com[1] <= base_max_y
+        
+        # Calculate margins (how close to the edge is the CoM?)
+        margin_x = min(com[0] - base_min_x, base_max_x - com[0])
+        margin_y = min(com[1] - base_min_y, base_max_y - com[1])
+        min_margin = min(margin_x, margin_y)
+        
+        details = {
+            'center_of_mass': [round(c, 2) for c in com],
+            'base_bounds': {
+                'x_range': [round(base_min_x, 2), round(base_max_x, 2)],
+                'y_range': [round(base_min_y, 2), round(base_max_y, 2)],
+            },
+            'margin': round(min_margin, 2)
+        }
+        
+        if is_stable_x and is_stable_y:
+            return TestResult(
+                name="Static Stability",
+                status=TestStatus.PASSED,
+                message=f"Design is stable (CoM is {min_margin:.1f}mm inside base)",
+                details=details
+            )
+        else:
+            return TestResult(
+                name="Static Stability",
+                status=TestStatus.FAILED,
+                message=f"Design is unstable! Center of Mass is outside the base.",
+                long_message=f"Center of Mass: {com}\nBase Bounds: X[{base_min_x}, {base_max_x}], Y[{base_min_y}, {base_max_y}]",
+                details=details
+            )
+
+    except Exception as e:
+        logger.error(f"Stability test failed with error: {e}", exc_info=True)
+        return TestResult(
+            name="Static Stability",
+            status=TestStatus.ERROR,
+            message=f"Error running stability test: {str(e)}",
+        )
+
+
 def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
     """Run the full test suite on the provided code."""
     tests: List[TestResult] = []
@@ -677,6 +908,14 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
         # Test 3: Check for part intersections
         intersection_result = test_no_intersections(result)
         tests.append(intersection_result)
+        
+        # Test 4: Static Stability
+        stability_result = test_static_stability(result)
+        tests.append(stability_result)
+        
+        # Test 5: Part Connectivity
+        connectivity_result = test_connectivity(result)
+        tests.append(connectivity_result)
     else:
         tests.append(TestResult(
             name="Parts in Library",
@@ -685,6 +924,21 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
         ))
         tests.append(TestResult(
             name="No Part Intersections",
+            status=TestStatus.SKIPPED,
+            message="Skipped because code execution failed",
+        ))
+        tests.append(TestResult(
+            name="Static Stability",
+            status=TestStatus.SKIPPED,
+            message="Skipped because code execution failed",
+        ))
+        tests.append(TestResult(
+            name="Part Connectivity",
+            status=TestStatus.SKIPPED,
+            message="Skipped because code execution failed",
+        ))
+        tests.append(TestResult(
+            name="Part Connectivity",
             status=TestStatus.SKIPPED,
             message="Skipped because code execution failed",
         ))
