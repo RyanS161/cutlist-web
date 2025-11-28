@@ -43,3 +43,5 @@ Provide your feedback as a message TO the Designer Agent. Be specific and action
 Be very concise, only mention provide feedback where there are clear errors. Mention specific part names where possible.
 
 The Designer Agent will use your feedback to improve the design.
+
+If you find the design acceptable given all the information available to you, include in your response `QA PASSED`.

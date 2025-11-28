@@ -56,23 +56,23 @@ function StlModel({ url }: { url: string }) {
 }
 
 // Axis helper component showing X (red), Y (green), Z (blue) arrows at origin
-function AxisHelper({ size = 50 }: { size?: number }) {
-  return (
-    <group>
-      {/* X axis - Red */}
-      <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), size, 0xff0000, size * 0.15, size * 0.08]} />
-      {/* Y axis - Green */}
-      <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), size, 0x00ff00, size * 0.15, size * 0.08]} />
-      {/* Z axis - Blue */}
-      <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), size, 0x0000ff, size * 0.15, size * 0.08]} />
-      {/* Origin sphere */}
-      <mesh position={[0, 0, 0]}>
-        <sphereGeometry args={[size * 0.03, 16, 16]} />
-        <meshBasicMaterial color={0xffffff} />
-      </mesh>
-    </group>
-  );
-}
+// function AxisHelper({ size = 50 }: { size?: number }) {
+//   return (
+//     <group>
+//       {/* X axis - Red */}
+//       <arrowHelper args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), size, 0xff0000, size * 0.15, size * 0.08]} />
+//       {/* Y axis - Green */}
+//       <arrowHelper args={[new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), size, 0x00ff00, size * 0.15, size * 0.08]} />
+//       {/* Z axis - Blue */}
+//       <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), size, 0x0000ff, size * 0.15, size * 0.08]} />
+//       {/* Origin sphere */}
+//       <mesh position={[0, 0, 0]}>
+//         <sphereGeometry args={[size * 0.03, 16, 16]} />
+//         <meshBasicMaterial color={0xffffff} />
+//       </mesh>
+//     </group>
+//   );
+// }
 
 // Main STL Viewer component - this is the default export for lazy loading
 export default function StlViewer({ url }: { url: string }) {

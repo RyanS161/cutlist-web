@@ -361,10 +361,10 @@ def _try_render_views(result, base_id: str) -> Optional[str]:
         # Define 4 isometric camera positions (azimuth, elevation)
         # These give views from each "corner" of the object
         views = [
-            ("Back-Right", 0, 0),
-            ("Back-Left", 90, 0),
-            ("Front-Right", 180, 0),
-            ("Front-Left", 270, 0),
+            ("View 1", 0, 0),
+            ("View 2", 180, 0),
+            ("View 3", 135, -90),
+            ("View 4", 215, -90),
         ]
         
         view_size = 400
