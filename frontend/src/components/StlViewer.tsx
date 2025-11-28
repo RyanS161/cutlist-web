@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { TrackballControls } from '@react-three/drei';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import * as THREE from 'three';
 
@@ -98,8 +98,8 @@ export default function StlViewer({ url }: { url: string }) {
       <directionalLight position={[-10, -10, -10]} intensity={0.5} />
       <directionalLight position={[0, 10, 0]} intensity={0.3} />
       <StlModel url={url} />
-      <AxisHelper />
-      <OrbitControls enableDamping dampingFactor={0.1} />
+      {/* <AxisHelper /> */}
+      <TrackballControls rotateSpeed={4.0} />
     </Canvas>
   );
 }

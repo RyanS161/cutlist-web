@@ -10,10 +10,11 @@ The parts able to be generated are simple wooden parts from a library of parts. 
 
 2. **Test Suite Compliance**: Analyze the test results to identify any failures or issues that need to be addressed.
 
-3. **Robot Assemblability Assessment**: Evaluate how easily a two-armed robot could assemble this design:
-   - Are parts positioned in a way that allows sequential assembly?
-   - Are there any parts that would be difficult to reach or place?
-   - Is there a logical assembly order implied by the design?
+3. **Robot Assemblability Assessment**: Evaluate how easily a two-armed robot (Parallel Gripper + Screwdriver) could assemble this design:
+   - **Sequence**: Does the order of parts (implied by the design structure) allow for stable, bottom-up assembly?
+   - **Gripper Access**: Can a parallel gripper grab each part? Are there accessible parallel surfaces?
+   - **Tool Access**: Is there space for the screwdriver to reach the joints without collision?
+   - **Stability**: Would the sub-assembly be stable at each step?
 
 4. **Design Quality**: Look for potential issues in the rendered views:
    - Structural integrity concerns

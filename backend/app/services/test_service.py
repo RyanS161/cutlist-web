@@ -714,11 +714,18 @@ def test_connectivity(result: Any) -> TestResult:
         disconnected_indices = [i for i, v in enumerate(visited) if not v]
         disconnected_names = [parts[i]['name'] for i in disconnected_indices]
         
+        # Format message to include names if few enough
+        if len(disconnected_names) <= 3:
+            part_list = ", ".join(f"'{n}'" for n in disconnected_names)
+            message = f"Detached parts: {part_list}"
+        else:
+            message = f"Found {len(disconnected_names)} detached parts"
+            
         return TestResult(
             name="Part Connectivity",
             status=TestStatus.FAILED,
-            message=f"Found {len(disconnected_names)} detached part(s)",
-            long_message="The following parts are not connected to the main assembly (starting from first part):\n" + "\n".join(disconnected_names),
+            message=message,
+            long_message="The following parts are not connected to the main assembly (starting from first part):\n" + "\n".join(f"- {name}" for name in disconnected_names),
             details={
                 'disconnected_parts': disconnected_names,
             }
