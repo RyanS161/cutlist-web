@@ -55,12 +55,30 @@ export function ChatWindow() {
   const [designCode, setDesignCode] = useState('');
   const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
+  
+  // History state
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
   
+  // Add code to history
+  const addToHistory = useCallback((code: string) => {
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      // Only add if different from current head
+      if (newHistory.length === 0 || newHistory[newHistory.length - 1] !== code) {
+        newHistory.push(code);
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      }
+      return prev;
+    });
+  }, [historyIndex]);
+
   // Execute code when it changes (from model or user save)
   const runCode = useCallback(async (code: string) => {
     if (!code.trim()) return;
@@ -94,8 +112,9 @@ export function ChatWindow() {
   // Handle code change from user edits (save button)
   const handleUserCodeChange = useCallback((code: string) => {
     setDesignCode(code);
+    addToHistory(code);
     runCode(code);
-  }, [runCode]);
+  }, [runCode, addToHistory]);
   
   const getCurrentCode = useCallback(() => {
     return designCodeRef.current;
@@ -106,6 +125,38 @@ export function ChatWindow() {
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
   });
+  
+  // Track streaming state to save history and run code when done
+  const prevStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming && designCode) {
+      // Streaming just finished
+      addToHistory(designCode);
+      runCode(designCode);
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, designCode, addToHistory, runCode]);
+
+  // History navigation
+  const handleUndo = useCallback(() => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      const code = history[newIndex];
+      setDesignCode(code);
+      runCode(code);
+    }
+  }, [historyIndex, history, runCode]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      const code = history[newIndex];
+      setDesignCode(code);
+      runCode(code);
+    }
+  }, [historyIndex, history, runCode]);
   
   // Handle image review request from Actions panel
   const handleReviewImage = useCallback((viewsUrl: string, _code: string) => {
@@ -238,15 +289,7 @@ Please analyze the error and update the code to fix it.`;
       .finally(() => setIsLoadingPrompt(false));
   };
   
-  // Run code when streaming completes and there's new code
-  const prevStreamingRef = useRef(isStreaming);
-  useEffect(() => {
-    // Detect when streaming just finished
-    if (prevStreamingRef.current && !isStreaming && designCode) {
-      runCode(designCode);
-    }
-    prevStreamingRef.current = isStreaming;
-  }, [isStreaming, designCode, runCode]);
+
 
   return (
     <div className="app-container">
@@ -394,6 +437,10 @@ Please analyze the error and update the code to fix it.`;
           onQAReview={handleQAReview}
           isReviewing={isReviewing}
           isQAReviewing={isQAReviewing}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < history.length - 1}
         />
       )}
     </div>

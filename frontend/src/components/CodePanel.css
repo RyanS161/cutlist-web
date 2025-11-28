@@ -659,3 +659,16 @@
   max-height: 100%;
   overflow: hidden;
 }
+
+.history-controls {
+  display: flex;
+  gap: 0.25rem;
+  margin-right: 0.5rem;
+}
+
+.code-btn.history-btn {
+  padding: 0.25rem 0.5rem;
+  min-width: 32px;
+  font-size: 1.1rem;
+  line-height: 1;
+}

@@ -46,6 +46,10 @@ interface CodePanelProps {
   onQAReview?: (viewsUrl: string, testResultsSummary: string) => void;
   isReviewing?: boolean;
   isQAReviewing?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 /**
@@ -63,6 +67,10 @@ export function CodePanel({
   onQAReview,
   isReviewing = false,
   isQAReviewing = false,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }: CodePanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedCode, setEditedCode] = useState(code);
@@ -284,6 +292,24 @@ export function CodePanel({
             </>
           ) : (
             <>
+              <div className="history-controls">
+                <button 
+                  onClick={onUndo} 
+                  className="code-btn history-btn"
+                  disabled={!canUndo || isStreaming}
+                  title="Previous Version"
+                >
+                  ←
+                </button>
+                <button 
+                  onClick={onRedo} 
+                  className="code-btn history-btn"
+                  disabled={!canRedo || isStreaming}
+                  title="Next Version"
+                >
+                  →
+                </button>
+              </div>
               <button 
                 onClick={handleEdit} 
                 className="code-btn edit-btn"
