@@ -455,9 +455,6 @@ def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
     part_names = list(objects_dict.keys())
     num_parts = len(part_names)
     
-    if num_parts < 2:
-        return None  # No point in animating a single part
-    
     logger.info(f"Generating assembly GIF with {num_parts} parts")
     
     try:
@@ -476,23 +473,45 @@ def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
             if part_obj is None:
                 continue
             
-            # Apply location transform if present
-            if part_loc is not None:
-                try:
-                    transformed = part_obj.val().located(part_loc)
-                    export_obj = cq.Workplane().add(transformed)
-                except Exception:
-                    export_obj = part_obj
+            # Get the underlying shape (without assembly location)
+            if hasattr(part_obj, 'val'):
+                shape = part_obj.val()
             else:
-                export_obj = part_obj
+                shape = part_obj
+            
+            if shape is None:
+                continue
             
             # Export to temporary STL
             tmp_path = SVG_DIR / f"{base_id}_{part_name}_temp.stl"
             part_stl_files.append(tmp_path)
             
             try:
+                # Export the shape directly (preserves local orientation like YZ plane)
+                # We wrap in Workplane to ensure export compatibility
+                if hasattr(shape, 'wrapped'): # It's a Shape
+                    export_obj = cq.Workplane().add(shape)
+                else:
+                    export_obj = shape
+                    
                 cq.exporters.export(export_obj, str(tmp_path))
                 mesh = pv.read(str(tmp_path))
+                
+                # Apply assembly location transform to the mesh directly
+                if part_loc is not None:
+                    try:
+                        # Convert cq.Location to 4x4 matrix
+                        T = part_loc.wrapped.Transformation()
+                        matrix = [[0.0]*4 for _ in range(4)]
+                        for r in range(3):
+                            for c in range(4):
+                                matrix[r][c] = T.Value(r+1, c+1)
+                        matrix[3][3] = 1.0
+                        
+                        mesh.transform(matrix)
+                    except Exception as e:
+                        logger.warning(f"Failed to apply transform to mesh for {part_name}: {e}")
+                
                 part_meshes[part_name] = mesh
             except Exception as e:
                 logger.warning(f"Failed to export part {part_name}: {e}")
