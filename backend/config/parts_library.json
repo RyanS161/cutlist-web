@@ -1,0 +1,28 @@
+{
+  "beams": [
+    {
+      "name": "beam_28x28",
+      "width": 28,
+      "height": 28,
+      "min_length": 100,
+      "max_length": 500,
+      "length_increment": 50
+    },
+    {
+      "name": "beam_48x24",
+      "width": 48,
+      "height": 24,
+      "min_length": 100,
+      "max_length": 500,
+      "length_increment": 50
+    }
+  ],
+  "plywood": {
+    "thickness": 7,
+    "max_width": 500,
+    "max_height": 500
+  },
+  "hardware": {
+    "screw_max_length": 25
+  }
+}

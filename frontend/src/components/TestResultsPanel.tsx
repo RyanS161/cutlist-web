@@ -40,7 +40,8 @@ function TestResultCard({ test }: { test: TestResultItem }) {
   
   const getPartDescription = (classification: Record<string, unknown>) => {
     const type = classification.type as string;
-    if (type === 'beam_28x28' || type === 'beam_48x24') {
+    // Generic check for beams (they have a length property)
+    if (typeof classification.length === 'number') {
       return `${formatPartType(type)} - Length: ${classification.length}mm`;
     } else if (type === 'plywood') {
       return `Plywood - ${classification.width}×${classification.height}mm (${classification.thickness}mm thick)`;
@@ -51,9 +52,12 @@ function TestResultCard({ test }: { test: TestResultItem }) {
   const isPartValid = (classification: Record<string, unknown>) => {
     const type = classification.type as string;
     if (type === 'unknown') return false;
-    if (type === 'beam_28x28' || type === 'beam_48x24') {
+    
+    // Generic check for beams
+    if (typeof classification.valid_length === 'boolean') {
       return classification.valid_length === true;
     }
+    
     if (type === 'plywood') {
       return classification.valid_size === true;
     }

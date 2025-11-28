@@ -5,6 +5,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from ..config import get_settings
+
 try:
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_OBB
@@ -56,32 +58,6 @@ class TestSuiteResult:
             'tests': [t.to_dict() for t in self.tests],
             'success': self.failed == 0 and self.errors == 0,
         }
-
-
-# Design constraints from system prompt
-CONSTRAINTS = {
-    # Beam dimensions (width x height)
-    'beam_28x28': {
-        'width': 28,
-        'height': 28,
-        'min_length': 100,
-        'max_length': 500,
-        'length_increment': 50,
-    },
-    'beam_48x24': {
-        'width': 48,
-        'height': 24,
-        'min_length': 100,
-        'max_length': 500,
-        'length_increment': 50,
-    },
-    'plywood': {
-        'thickness': 7,
-        'max_width': 500,
-        'max_height': 500,
-    },
-    'screw_max_length': 25,
-}
 
 
 def _get_oriented_dims(shape) -> Optional[List[float]]:
@@ -145,33 +121,38 @@ def _get_axis_aligned_dims(solid) -> Optional[List[float]]:
 
 def _classify_part(sorted_dims: List[float]) -> Dict[str, Any]:
     """Classify a part based on its sorted dimensions [smallest, middle, largest]."""
+    parts_lib = get_settings().parts_library
+    tolerance = 1.0
     
-    # Check for 28x28 beam
-    if _is_beam_28x28(sorted_dims):
-        return {
-            'type': 'beam_28x28',
-            'cross_section': (28, 28),
-            'length': sorted_dims[2],
-            'valid_length': _is_valid_beam_length(sorted_dims[2]),
-        }
+    # Check beams
+    for beam in parts_lib.get('beams', []):
+        # Beams are defined by width and height. sorted_dims[0] and [1] should match.
+        # Since sorted_dims is sorted, we should sort the beam dims too to compare.
+        beam_dims = sorted([beam['width'], beam['height']])
+        
+        if (abs(sorted_dims[0] - beam_dims[0]) <= tolerance and 
+            abs(sorted_dims[1] - beam_dims[1]) <= tolerance):
+            
+            length = sorted_dims[2]
+            valid_length = _is_valid_beam_length(length, beam)
+            
+            return {
+                'type': beam['name'],
+                'cross_section': (beam['width'], beam['height']),
+                'length': length,
+                'valid_length': valid_length,
+                'beam_def': beam
+            }
     
-    # Check for 48x24 beam
-    if _is_beam_48x24(sorted_dims):
-        return {
-            'type': 'beam_48x24',
-            'cross_section': (48, 24),
-            'length': sorted_dims[2],
-            'valid_length': _is_valid_beam_length(sorted_dims[2]),
-        }
-    
-    # Check for plywood (7mm thick)
-    if _is_plywood(sorted_dims):
+    # Check plywood
+    plywood = parts_lib.get('plywood', {})
+    if plywood and abs(sorted_dims[0] - plywood.get('thickness', 7)) <= 0.5:
         return {
             'type': 'plywood',
             'thickness': sorted_dims[0],
             'width': sorted_dims[1],
             'height': sorted_dims[2],
-            'valid_size': sorted_dims[1] <= 500 and sorted_dims[2] <= 500,
+            'valid_size': sorted_dims[1] <= plywood.get('max_width', 500) and sorted_dims[2] <= plywood.get('max_height', 500),
         }
     
     return {
@@ -180,30 +161,19 @@ def _classify_part(sorted_dims: List[float]) -> Dict[str, Any]:
     }
 
 
-def _is_beam_28x28(sorted_dims: List[float], tolerance: float = 1.0) -> bool:
-    """Check if dimensions match a 28x28 beam."""
-    return (abs(sorted_dims[0] - 28) <= tolerance and 
-            abs(sorted_dims[1] - 28) <= tolerance)
-
-
-def _is_beam_48x24(sorted_dims: List[float], tolerance: float = 1.0) -> bool:
-    """Check if dimensions match a 48x24 beam."""
-    return ((abs(sorted_dims[0] - 24) <= tolerance and abs(sorted_dims[1] - 48) <= tolerance) or
-            (abs(sorted_dims[0] - 48) <= tolerance and abs(sorted_dims[1] - 24) <= tolerance))
-
-
-def _is_plywood(sorted_dims: List[float], tolerance: float = 0.5) -> bool:
-    """Check if dimensions match plywood (7mm thick)."""
-    return abs(sorted_dims[0] - 7) <= tolerance
-
-
-def _is_valid_beam_length(length: float, tolerance: float = 1.0) -> bool:
-    """Check if beam length is valid (100-500mm in 50mm increments)."""
-    if length < 100 - tolerance or length > 500 + tolerance:
+def _is_valid_beam_length(length: float, beam_def: Dict[str, Any], tolerance: float = 1.0) -> bool:
+    """Check if beam length is valid based on definition."""
+    min_l = beam_def.get('min_length', 100)
+    max_l = beam_def.get('max_length', 500)
+    inc = beam_def.get('length_increment', 50)
+    
+    if length < min_l - tolerance or length > max_l + tolerance:
         return False
-    # Check if it's a multiple of 50 within tolerance
-    remainder = (length - 100) % 50
-    return remainder <= tolerance or remainder >= 50 - tolerance
+        
+    # Check increment
+    # We assume starts at min_length
+    remainder = (length - min_l) % inc
+    return remainder <= tolerance or remainder >= inc - tolerance
 
 
 def _extract_solids(result) -> List[Dict[str, Any]]:
@@ -468,19 +438,7 @@ def test_parts_in_library(result) -> TestResult:
         parts_info.append(part_info)
         
         # Check for violations
-        if classification['type'] == 'beam_28x28':
-            if not classification['valid_length']:
-                violations.append(
-                    f"Part '{name}': 28x28 beam length {classification['length']:.1f}mm "
-                    f"is not in valid range (100-500mm, 50mm increments)"
-                )
-        elif classification['type'] == 'beam_48x24':
-            if not classification['valid_length']:
-                violations.append(
-                    f"Part '{name}': 48x24 beam length {classification['length']:.1f}mm "
-                    f"is not in valid range (100-500mm, 50mm increments)"
-                )
-        elif classification['type'] == 'plywood':
+        if classification['type'] == 'plywood':
             if not classification['valid_size']:
                 violations.append(
                     f"Part '{name}': Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
@@ -491,6 +449,17 @@ def test_parts_in_library(result) -> TestResult:
                 f"Part '{name}': Unrecognized part with dimensions "
                 f"{classification['dimensions'][0]:.1f}x{classification['dimensions'][1]:.1f}x{classification['dimensions'][2]:.1f}mm"
             )
+        else:
+            # Assume it's a beam if it has 'valid_length'
+            if 'valid_length' in classification and not classification['valid_length']:
+                beam_def = classification.get('beam_def', {})
+                min_l = beam_def.get('min_length', 100)
+                max_l = beam_def.get('max_length', 500)
+                inc = beam_def.get('length_increment', 50)
+                violations.append(
+                    f"Part '{name}': {classification['type']} length {classification['length']:.1f}mm "
+                    f"is not in valid range ({min_l}-{max_l}mm, {inc}mm increments)"
+                )
     
     if violations:
         return TestResult(
