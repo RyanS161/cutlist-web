@@ -18,7 +18,8 @@ class GeminiService:
     def __init__(self):
         settings = get_settings()
         self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.model = settings.gemini_model
+        self.designer_model = settings.gemini_designer_model
+        self.qa_model = settings.gemini_qa_model
         self.system_prompt = settings.system_prompt
     
     def _build_contents(
@@ -102,7 +103,7 @@ The QA Agent has independently reviewed the design and provided the following fe
         
         try:
             async for chunk in await self.client.aio.models.generate_content_stream(
-                model=self.model,
+                model=self.designer_model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=prompt_to_use,
@@ -176,7 +177,7 @@ Keep your response brief - either confirm the design is good, or provide the cor
         
         try:
             async for chunk in await self.client.aio.models.generate_content_stream(
-                model=self.model,
+                model=self.designer_model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=prompt_to_use,
@@ -239,7 +240,7 @@ Please provide your QA assessment following your review guidelines."""
         
         try:
             async for chunk in await self.client.aio.models.generate_content_stream(
-                model=self.model,
+                model=self.qa_model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,

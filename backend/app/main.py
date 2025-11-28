@@ -249,7 +249,7 @@ class QAReviewRequest(BaseModel):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "model": get_settings().gemini_model}
+    return {"status": "healthy", "model": get_settings().gemini_designer_model}
 
 
 @app.get("/api/system-prompt")
@@ -551,11 +551,6 @@ def _try_render_assembly_gif(result, base_id: str) -> Optional[str]:
             img = Image.open(temp_path)
             frames.append(img.copy())
             img.close()
-        
-        # Add a longer pause on the final frame (duplicate it a few times)
-        if frames:
-            for _ in range(3):
-                frames.append(frames[-1].copy())
         
         # Save as animated GIF
         gif_filename = f"{base_id}_assembly.gif"

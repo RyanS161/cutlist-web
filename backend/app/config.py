@@ -17,7 +17,8 @@ class Settings:
     
     def __init__(self):
         self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-        self.gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_designer_model: str = os.getenv("GEMINI_DESIGNER_MODEL", "gemini-2.5-pro")
+        self.gemini_qa_model: str = os.getenv("GEMINI_QA_MODEL", "gemini-2.5-flash-lite")
         self.host: str = os.getenv("HOST", "0.0.0.0")
         self.port: int = int(os.getenv("PORT", "8080"))
         
