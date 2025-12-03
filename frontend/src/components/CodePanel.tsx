@@ -44,6 +44,7 @@ interface CodePanelProps {
   onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
   onReviewError?: (error: string, code: string) => void;
   onQAReview?: (viewsUrl: string, testResultsSummary: string) => void;
+  onDownloadProject?: () => void;
   isReviewing?: boolean;
   isQAReviewing?: boolean;
   onUndo?: () => void;
@@ -65,6 +66,7 @@ export function CodePanel({
   onReviewTestResults,
   onReviewError,
   onQAReview,
+  onDownloadProject,
   isReviewing = false,
   isQAReviewing = false,
   onUndo,
@@ -482,6 +484,7 @@ export function CodePanel({
                 onQAReview(executionResult.viewsUrl, summary);
               }
             }}
+            onDownloadProject={() => onDownloadProject?.()}
             canReviewImage={!!executionResult?.viewsUrl}
             canReviewTests={!!testResults}
             canQAReview={!!executionResult?.viewsUrl && !!testResults}

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useChat } from '../hooks/useChat';
-import { getDefaultSystemPrompt, executeCode, type TestSuiteResult } from '../services/api';
+import { getDefaultSystemPrompt, executeCode, downloadProject, type TestSuiteResult } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
@@ -120,7 +120,17 @@ export function ChatWindow() {
     return designCodeRef.current;
   }, []);
   
-  const { messages, isStreaming, isReviewing, isQAReviewing, error, sendMessage, triggerQAReview, clearChat, chatStarted } = useChat({ 
+  const { 
+    messages, 
+    isStreaming, 
+    isReviewing, 
+    isQAReviewing, 
+    error, 
+    sendMessage, 
+    triggerQAReview, 
+    clearChat, 
+    chatStarted 
+  } = useChat({ 
     systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
@@ -289,7 +299,21 @@ Please analyze the error and update the code to fix it.`;
       .finally(() => setIsLoadingPrompt(false));
   };
   
-
+  // Handle project download
+  const handleDownloadProject = useCallback(async () => {
+    try {
+      await downloadProject({
+        code: designCode,
+        history: messages,
+        stlUrl: executionResult.stlUrl,
+        viewsUrl: executionResult.viewsUrl,
+        assemblyGifUrl: executionResult.assemblyGifUrl,
+      });
+    } catch (err) {
+      console.error('Failed to download project:', err);
+      alert('Failed to download project. See console for details.');
+    }
+  }, [designCode, messages, executionResult]);
 
   return (
     <div className="app-container">
@@ -441,6 +465,7 @@ Please analyze the error and update the code to fix it.`;
           onRedo={handleRedo}
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
+          onDownloadProject={handleDownloadProject}
         />
       )}
     </div>

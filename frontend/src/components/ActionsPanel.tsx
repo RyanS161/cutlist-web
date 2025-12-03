@@ -4,6 +4,7 @@ interface ActionsPanelProps {
   onReviewImage: () => void;
   onReviewTestResults: () => void;
   onQAReview: () => void;
+  onDownloadProject: () => void;
   canReviewImage: boolean;
   canReviewTests: boolean;
   canQAReview: boolean;
@@ -18,6 +19,7 @@ export function ActionsPanel({
   onReviewImage,
   onReviewTestResults,
   onQAReview,
+  onDownloadProject,
   canReviewImage,
   canReviewTests,
   canQAReview,
@@ -55,6 +57,14 @@ export function ActionsPanel({
         >
           <span className="action-icon">📋</span>
           <span className="action-text">Send Test Results to Agent for Review</span>
+        </button>
+        <button
+          onClick={onDownloadProject}
+          disabled={isAnyReviewing}
+          className="action-btn download-project-btn"
+        >
+          <span className="action-icon">💾</span>
+          <span className="action-text">Download Project</span>
         </button>
         {isAnyReviewing && (
           <div className="reviewing-indicator">
