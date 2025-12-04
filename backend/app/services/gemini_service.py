@@ -107,7 +107,7 @@ The QA Agent has independently reviewed the design and provided the following fe
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=prompt_to_use,
-                    temperature=0.7,
+                    temperature=0.0,
                 )
             ):
                 if chunk.text:
@@ -181,7 +181,7 @@ Keep your response brief - either confirm the design is good, or provide the cor
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=prompt_to_use,
-                    temperature=0.7,
+                    temperature=0.0,
                 )
             ):
                 if chunk.text:
@@ -244,7 +244,7 @@ Please provide your QA assessment following your review guidelines."""
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    temperature=0.7,
+                    temperature=0.0,
                 )
             ):
                 if chunk.text:
