@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useChat } from '../hooks/useChat';
-import { getDefaultSystemPrompt, executeCode, downloadProject, type TestSuiteResult } from '../services/api';
+import { getDefaultSystemPrompt, executeCode, downloadProject, downloadCSV } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
@@ -127,7 +127,6 @@ export function ChatWindow() {
     isQAReviewing, 
     error, 
     sendMessage, 
-    triggerQAReview, 
     clearChat, 
     chatStarted 
   } = useChat({ 
@@ -167,72 +166,6 @@ export function ChatWindow() {
       runCode(code);
     }
   }, [historyIndex, history, runCode]);
-  
-  // Handle image review request from Actions panel
-  const handleReviewImage = useCallback((viewsUrl: string, _code: string) => {
-    // Send as a user message asking for visual review, include the image
-    const message = `Please review the rendered image of my design:
-
-![Design Preview](${viewsUrl})
-
-Check if:
-- The proportions and structure look correct
-- All parts appear to be properly positioned and aligned
-- The design matches what I requested
-- There are any visual issues or improvements to suggest
-
-If you see any problems, please update the code to fix them.`;
-    
-    sendMessage(message);
-  }, [sendMessage]);
-  
-  // Handle test results review request from Actions panel
-  const handleReviewTestResults = useCallback((testResults: TestSuiteResult, _code: string) => {
-    // Format test results as a message for the AI
-    // Build detailed test information including long_message for agent
-    const failedTestsDetails = testResults.tests
-      .filter(test => test.status !== 'passed')
-      .map(test => {
-        let detail = `- **${test.name}**: ${test.message || ''}`;
-        if (test.long_message) {
-          detail += `\n${test.long_message}`;
-        }
-        return detail;
-      })
-      .join('\n\n');
-    
-    const message = `Please review these test results and fix any issues in the code:
-
-**Test Results:**
-- Passed: ${testResults.passed}
-- Failed: ${testResults.failed}
-- Errors: ${testResults.errors}
-
-**Failed Tests:**
-${failedTestsDetails || 'None'}
-
-Please analyze the failures and update the code to fix them.`;
-    
-    sendMessage(message);
-  }, [sendMessage]);
-
-  // Handle error review request from output panel
-  const handleReviewError = useCallback((error: string, _code: string) => {
-    const message = `I got the following error when running the code:
-
-\`\`\`
-${error}
-\`\`\`
-
-Please analyze the error and update the code to fix it.`;
-    
-    sendMessage(message);
-  }, [sendMessage]);
-
-  // Handle QA review request from Actions panel
-  const handleQAReview = useCallback((viewsUrl: string, testResultsSummary: string) => {
-    triggerQAReview(viewsUrl, testResultsSummary);
-  }, [triggerQAReview]);
 
   // Load default system prompt on mount
   useEffect(() => {
@@ -314,6 +247,16 @@ Please analyze the error and update the code to fix it.`;
       alert('Failed to download project. See console for details.');
     }
   }, [designCode, messages, executionResult]);
+
+  // Handle CSV download
+  const handleDownloadCSV = useCallback(async () => {
+    try {
+      await downloadCSV(designCode);
+    } catch (err) {
+      console.error('Failed to download CSV:', err);
+      alert('Failed to download CSV. See console for details.');
+    }
+  }, [designCode]);
 
   return (
     <div className="app-container">
@@ -455,17 +398,12 @@ Please analyze the error and update the code to fix it.`;
           onCodeChange={handleUserCodeChange}
           isStreaming={isStreaming || isReviewing || isQAReviewing}
           executionResult={executionResult}
-          onReviewImage={handleReviewImage}
-          onReviewTestResults={handleReviewTestResults}
-          onReviewError={handleReviewError}
-          onQAReview={handleQAReview}
-          isReviewing={isReviewing}
-          isQAReviewing={isQAReviewing}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={historyIndex > 0}
           canRedo={historyIndex < history.length - 1}
           onDownloadProject={handleDownloadProject}
+          onDownloadCSV={handleDownloadCSV}
         />
       )}
     </div>

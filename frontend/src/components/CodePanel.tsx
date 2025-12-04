@@ -1,10 +1,8 @@
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
 import 'highlight.js/styles/github-dark.css';
 import './CodePanel.css';
-import { runTests, type TestSuiteResult } from '../services/api';
-import { TestResultsPanel } from './TestResultsPanel';
 import { ActionsPanel } from './ActionsPanel';
 
 // Lazy load the heavy Three.js STL viewer
@@ -40,13 +38,9 @@ interface CodePanelProps {
   onCodeChange: (code: string) => void;
   isStreaming: boolean;
   executionResult?: ExecutionResult;
-  onReviewImage?: (viewsUrl: string, code: string) => void;
-  onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
   onReviewError?: (error: string, code: string) => void;
-  onQAReview?: (viewsUrl: string, testResultsSummary: string) => void;
   onDownloadProject?: () => void;
-  isReviewing?: boolean;
-  isQAReviewing?: boolean;
+  onDownloadCSV?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -62,13 +56,9 @@ export function CodePanel({
   onCodeChange, 
   isStreaming, 
   executionResult,
-  onReviewImage,
-  onReviewTestResults,
   onReviewError,
-  onQAReview,
   onDownloadProject,
-  isReviewing = false,
-  isQAReviewing = false,
+  onDownloadCSV,
   onUndo,
   onRedo,
   canUndo = false,
@@ -78,8 +68,6 @@ export function CodePanel({
   const [editedCode, setEditedCode] = useState(code);
   const [copied, setCopied] = useState(false);
   const [showOutput, setShowOutput] = useState(false);
-  const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
-  const [isRunningTests, setIsRunningTests] = useState(false);
   const [isCodeUpdating, setIsCodeUpdating] = useState(false);
   
   // Track if code is actively being updated during streaming
@@ -127,64 +115,6 @@ export function CodePanel({
     }
   };
 
-  const handleRunTests = useCallback(async () => {
-    if (!code || isRunningTests) return;
-    
-    setIsRunningTests(true);
-    try {
-      const results = await runTests(code);
-      setTestResults(results);
-    } catch (err) {
-      console.error('Failed to run tests:', err);
-      setTestResults({
-        passed: 0,
-        failed: 0,
-        skipped: 0,
-        errors: 1,
-        tests: [{
-          name: 'Assembly Test Suite',
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Failed to run tests',
-        }],
-        success: false,
-      });
-    } finally {
-      setIsRunningTests(false);
-    }
-  }, [code, isRunningTests]);
-
-  // Auto-run tests after execution succeeds
-  const prevExecutionStatus = useRef(executionResult?.status);
-  useEffect(() => {
-    // Run tests when execution transitions to success
-    if (prevExecutionStatus.current !== 'success' && 
-        executionResult?.status === 'success' && 
-        code && 
-        !isRunningTests) {
-      handleRunTests();
-    }
-    prevExecutionStatus.current = executionResult?.status;
-  }, [executionResult?.status, code, isRunningTests, handleRunTests]);
-
-  // Handlers for review actions
-  const handleReviewImage = useCallback(() => {
-    if (executionResult?.viewsUrl && onReviewImage) {
-      onReviewImage(executionResult.viewsUrl, code);
-    }
-  }, [executionResult?.viewsUrl, code, onReviewImage]);
-
-  const handleReviewTestResults = useCallback(() => {
-    if (testResults && onReviewTestResults) {
-      onReviewTestResults(testResults, code);
-    }
-  }, [testResults, code, onReviewTestResults]);
-
-  const handleReviewError = useCallback(() => {
-    if (executionResult?.error && onReviewError) {
-      onReviewError(executionResult.error, code);
-    }
-  }, [executionResult?.error, code, onReviewError]);
-
   // Python syntax highlighting using highlight.js
   const highlightPython = (codeInput: string): string => {
     if (!codeInput) return '';
@@ -213,17 +143,10 @@ export function CodePanel({
     if (isCodeUpdating) {
       return <span className="status-icon streaming">●</span>;
     }
-    if (isRunningTests) {
-      return <span className="status-icon testing">⟳</span>;
-    }
     switch (executionResult?.status) {
       case 'running':
         return <span className="status-icon running">⟳</span>;
       case 'success':
-        // Show warning icon if tests failed, check if tests passed
-        if (testResults && !testResults.success) {
-          return <span className="status-icon warning">⚠</span>;
-        }
         return <span className="status-icon success">✓</span>;
       case 'error':
         return <span className="status-icon error">✗</span>;
@@ -236,14 +159,11 @@ export function CodePanel({
     if (isCodeUpdating) {
       return 'Generating...';
     }
-    if (isRunningTests) {
-      return 'Testing...';
-    }
     switch (executionResult?.status) {
       case 'running':
         return 'Executing...';
       case 'success':
-        return testResults?.success ? 'All Passed' : (testResults ? 'Tests Failed' : 'Executed');
+        return 'Executed';
       case 'error':
         return 'Error';
       default:
@@ -253,10 +173,6 @@ export function CodePanel({
 
   const getStatusClass = () => {
     if (isCodeUpdating) return 'streaming';
-    if (isRunningTests) return 'testing';
-    if (executionResult?.status === 'success' && testResults) {
-      return testResults.success ? 'success' : 'warning';
-    }
     return executionResult?.status || '';
   };
 
@@ -275,7 +191,7 @@ export function CodePanel({
       <div className="code-panel-header">
         <div className="code-panel-title">
           <h3>Design Code</h3>
-          {(isCodeUpdating || isRunningTests || (executionResult && executionResult.status !== 'idle')) && (
+          {(isCodeUpdating || (executionResult && executionResult.status !== 'idle')) && (
             <div className={`execution-status ${getStatusClass()}`}>
               {getStatusIcon()}
               <span>{getStatusText()}</span>
@@ -387,14 +303,6 @@ export function CodePanel({
                 ) : executionResult?.error ? (
                   <div className="error-container">
                     <pre className="output-error">{executionResult.error}</pre>
-                    <button
-                      onClick={handleReviewError}
-                      disabled={isStreaming || isReviewing}
-                      className="send-error-btn"
-                    >
-                      <span className="action-icon">🔧</span>
-                      <span>Send Error to Agent for Fix</span>
-                    </button>
                   </div>
                 ) : (
                   <>
@@ -458,38 +366,11 @@ export function CodePanel({
           </div>
         )}
         
-        {/* Bottom Section: Test Results and Actions in 2-column grid */}
+        {/* Bottom Section: Actions panel */}
         <div className="bottom-panels-container">
-          <TestResultsPanel
-            testResults={testResults}
-            isRunning={isRunningTests}
-          />
           <ActionsPanel
-            onReviewImage={handleReviewImage}
-            onReviewTestResults={handleReviewTestResults}
-            onQAReview={() => {
-              if (executionResult?.viewsUrl && testResults && onQAReview) {
-                // Format detailed test results for QA agent (including long_message)
-                const failedTestsDetails = testResults.tests
-                  .filter(t => t.status !== 'passed')
-                  .map(t => {
-                    let detail = `- ${t.name}: ${t.message || t.status}`;
-                    if (t.long_message) {
-                      detail += `\n  ${t.long_message.replace(/\n/g, '\n  ')}`;
-                    }
-                    return detail;
-                  })
-                  .join('\n\n');
-                const summary = `Tests: ${testResults.passed} passed, ${testResults.failed} failed, ${testResults.errors} errors\n\n${failedTestsDetails ? `Failed Tests:\n${failedTestsDetails}` : 'All tests passed.'}`;
-                onQAReview(executionResult.viewsUrl, summary);
-              }
-            }}
             onDownloadProject={() => onDownloadProject?.()}
-            canReviewImage={!!executionResult?.viewsUrl}
-            canReviewTests={!!testResults}
-            canQAReview={!!executionResult?.viewsUrl && !!testResults}
-            isReviewing={isReviewing}
-            isQAReviewing={isQAReviewing}
+            onDownloadCSV={() => onDownloadCSV?.()}
           />
         </div>
       </div>

@@ -5,8 +5,6 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-from ..config import get_settings
-
 try:
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_OBB
@@ -117,63 +115,6 @@ def _get_axis_aligned_dims(solid) -> Optional[List[float]]:
     except Exception as e:
         logger.warning(f"Failed to get bounding box: {e}")
         return None
-
-
-def _classify_part(sorted_dims: List[float]) -> Dict[str, Any]:
-    """Classify a part based on its sorted dimensions [smallest, middle, largest]."""
-    parts_lib = get_settings().parts_library
-    tolerance = 1.0
-    
-    # Check beams
-    for beam in parts_lib.get('beams', []):
-        # Beams are defined by width and height. sorted_dims[0] and [1] should match.
-        # Since sorted_dims is sorted, we should sort the beam dims too to compare.
-        beam_dims = sorted([beam['width'], beam['height']])
-        
-        if (abs(sorted_dims[0] - beam_dims[0]) <= tolerance and 
-            abs(sorted_dims[1] - beam_dims[1]) <= tolerance):
-            
-            length = sorted_dims[2]
-            valid_length = _is_valid_beam_length(length, beam)
-            
-            return {
-                'type': beam['name'],
-                'cross_section': (beam['width'], beam['height']),
-                'length': length,
-                'valid_length': valid_length,
-                'beam_def': beam
-            }
-    
-    # Check plywood
-    plywood = parts_lib.get('plywood', {})
-    if plywood and abs(sorted_dims[0] - plywood.get('thickness', 7)) <= 0.5:
-        return {
-            'type': 'plywood',
-            'thickness': sorted_dims[0],
-            'width': sorted_dims[1],
-            'height': sorted_dims[2],
-            'valid_size': sorted_dims[1] <= plywood.get('max_width', 500) and sorted_dims[2] <= plywood.get('max_height', 500),
-        }
-    
-    return {
-        'type': 'unknown',
-        'dimensions': sorted_dims,
-    }
-
-
-def _is_valid_beam_length(length: float, beam_def: Dict[str, Any], tolerance: float = 1.0) -> bool:
-    """Check if beam length is valid based on definition."""
-    min_l = beam_def.get('min_length', 100)
-    max_l = beam_def.get('max_length', 500)
-    inc = beam_def.get('length_increment', 50)
-    
-    if length < min_l - tolerance or length > max_l + tolerance:
-        return False
-        
-    # Check increment
-    # We assume starts at min_length
-    remainder = (length - min_l) % inc
-    return remainder <= tolerance or remainder >= inc - tolerance
 
 
 def _extract_solids(result) -> List[Dict[str, Any]]:
@@ -404,94 +345,6 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
             status=TestStatus.ERROR,
             message=f"Runtime error: {str(e)}",
         )
-
-
-def test_parts_in_library(result) -> TestResult:
-    """Test 2: Check if all parts meet the design constraints."""
-    parts = _extract_solids(result)
-    
-    if not parts:
-        return TestResult(
-            name="Parts in Library",
-            status=TestStatus.SKIPPED,
-            message="No individual parts found to analyze",
-        )
-    
-    parts_info = []
-    violations = []
-    
-    for i, part_data in enumerate(parts):
-        solid = part_data['solid']
-        name = part_data['name']
-        
-        sorted_dims = _get_oriented_dims(solid)
-        if sorted_dims is None:
-            continue
-            
-        classification = _classify_part(sorted_dims)
-        part_info = {
-            'index': i + 1,
-            'name': name,
-            'dimensions': sorted_dims,
-            'classification': classification,
-        }
-        parts_info.append(part_info)
-        
-        # Check for violations
-        if classification['type'] == 'plywood':
-            if not classification['valid_size']:
-                violations.append(
-                    f"Part '{name}': Plywood size {classification['width']:.1f}x{classification['height']:.1f}mm "
-                    f"exceeds maximum 500x500mm"
-                )
-        elif classification['type'] == 'unknown':
-            violations.append(
-                f"Part '{name}': Unrecognized part with dimensions "
-                f"{classification['dimensions'][0]:.1f}x{classification['dimensions'][1]:.1f}x{classification['dimensions'][2]:.1f}mm"
-            )
-        else:
-            # Assume it's a beam if it has 'valid_length'
-            if 'valid_length' in classification and not classification['valid_length']:
-                beam_def = classification.get('beam_def', {})
-                min_l = beam_def.get('min_length', 100)
-                max_l = beam_def.get('max_length', 500)
-                inc = beam_def.get('length_increment', 50)
-                violations.append(
-                    f"Part '{name}': {classification['type']} length {classification['length']:.1f}mm "
-                    f"is not in valid range ({min_l}-{max_l}mm, {inc}mm increments)"
-                )
-    
-    if violations:
-        return TestResult(
-            name="Parts in Library",
-            status=TestStatus.FAILED,
-            message=f"{len(violations)} part violation(s) found: ",
-            long_message="\n".join(violations),
-            details={
-                'violations': violations,
-                'parts_analyzed': len(parts_info),
-                'parts': parts_info,
-            }
-        )
-    
-    # Summarize parts
-    part_summary = {}
-    for part in parts_info:
-        ptype = part['classification']['type']
-        part_summary[ptype] = part_summary.get(ptype, 0) + 1
-    
-    summary_str = ", ".join(f"{count} {ptype}" for ptype, count in part_summary.items())
-    
-    return TestResult(
-        name="Parts in Library",
-        status=TestStatus.PASSED,
-        message=f"All {len(parts_info)} parts meet constraints ({summary_str})",
-        details={
-            'parts_analyzed': len(parts_info),
-            'summary': part_summary,
-            'parts': parts_info,
-        }
-    )
 
 
 def _get_solid_volume(solid) -> float:
@@ -875,29 +728,22 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
     exec_result = test_code_executes(code, exec_globals)
     tests.append(exec_result)
     
-    # Test 2: Part constraints (only if code executed successfully)
+    # Additional tests only if code executed successfully
     if exec_result.status == TestStatus.PASSED:
         result = exec_globals.get('result')
-        constraint_result = test_parts_in_library(result)
-        tests.append(constraint_result)
         
-        # Test 3: Check for part intersections
+        # Test 2: Check for part intersections
         intersection_result = test_no_intersections(result)
         tests.append(intersection_result)
         
-        # Test 4: Static Stability
+        # Test 3: Static Stability
         stability_result = test_static_stability(result)
         tests.append(stability_result)
         
-        # Test 5: Part Connectivity
+        # Test 4: Part Connectivity
         connectivity_result = test_connectivity(result)
         tests.append(connectivity_result)
     else:
-        tests.append(TestResult(
-            name="Parts in Library",
-            status=TestStatus.SKIPPED,
-            message="Skipped because code execution failed",
-        ))
         tests.append(TestResult(
             name="No Part Intersections",
             status=TestStatus.SKIPPED,
@@ -905,11 +751,6 @@ def run_test_suite(code: str, cached_modules: dict) -> TestSuiteResult:
         ))
         tests.append(TestResult(
             name="Static Stability",
-            status=TestStatus.SKIPPED,
-            message="Skipped because code execution failed",
-        ))
-        tests.append(TestResult(
-            name="Part Connectivity",
             status=TestStatus.SKIPPED,
             message="Skipped because code execution failed",
         ))

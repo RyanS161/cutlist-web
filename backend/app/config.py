@@ -108,7 +108,7 @@ class Settings:
                     for k, v in hw.items():
                         parts_info += f"- {k}: {v}\n"
                 
-                return base_prompt + parts_info
+                return base_prompt# + parts_info
         
         # Default system prompt if file not found
         return "You are a helpful AI assistant."

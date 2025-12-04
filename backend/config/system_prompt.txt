@@ -20,18 +20,52 @@ The code should use `cadquery.Assembly` to define the current design in code. Us
 
 ### Assembly Usage Pattern
 
+You must construct designs using ONLY the blocks from the provided library. Do not create custom shapes with `cq.Workplane().box()`.
+
+To use a block:
+1. Import the shape using `cq.importers.importShape`.
+2. Add it to the assembly.
+
 ```python
 import cadquery as cq
 
-# Create individual parts as Workplane objects
-part1 = cq.Workplane("XY").box(28, 28, 200)
-part2 = cq.Workplane("XY").box(48, 24, 150)
+# Load block definitions (paths are relative to the backend root)
+# You must use these exact filenames
+block1 = cq.importers.importStep("blocks/goki_block_1.step")
+block2 = cq.importers.importStep("blocks/goki_block_2.step")
 
-# Create assembly and add parts with names and locations
+# Create assembly
 result = cq.Assembly()
-result.add(part1, name="vertical_post", loc=cq.Location((0, 0, 100)))
-result.add(part2, name="horizontal_beam", loc=cq.Location((50, 0, 200)))
+
+# Add blocks to the assembly
+# CRITICAL: The name MUST start with the block type (e.g., "goki_block_1")
+# followed by a unique suffix (e.g., "_0", "_1").
+result.add(block1, name="goki_block_1_0", loc=cq.Location((0, 0, 12.5)))
+result.add(block2, name="goki_block_2_0", loc=cq.Location((50, 0, 12.5)))
 ```
+
+### Block Library
+
+You have access to the following blocks. All dimensions are in mm (X, Y, Z).
+
+All blocks have their corner at the origin.
+
+| Block Type | Filename | Dimensions (X, Y, Z) | Description |
+| :--- | :--- | :--- | :--- |
+| `goki_block_1` | `goki_block_1.step` | 25.0 x 25.0 x 25.0 | Perfect Cube |
+| `goki_block_2` | `goki_block_2.step` | 25.0 x 50.0 x 25.0 | Rectangular Prism |
+| `goki_block_3` | `goki_block_3.step` | 12.5 x 50.0 x 25.0 | Rectangular Prism |
+| `goki_block_4` | `goki_block_4.step` | 12.5 x 75.0 x 25.0 | Rectangular Prism |
+| `goki_block_5` | `goki_block_5.step` | 75.0 x 25.0 x 25.0 | Wide Arch |
+| `goki_block_6` | `goki_block_6.step` | 59.0 x 25.0 x 16.52 | Semi-circle |
+| `goki_block_7` | `goki_block_7.step` | 25.0 x 50.0 x 25.0 | Tall cylinder |
+| `goki_block_8` | `goki_block_8.step` | 37.5 x 25.0 x 37.5 | Right triangular wedge |
+
+**Important**:
+- When adding a block to the assembly, the `name` parameter MUST be the Block Type followed by a unique identifier (e.g., `goki_block_1_instance1`). This is required for the CSV export to work correctly.
+- Use `cq.Location` to position and rotate the blocks.
+- Remember that `importShape` loads the block centered or at its original position. You may need to adjust Z height to stack them. (e.g. if a block is 25mm high, its center is at Z=12.5, so to place it on the ground, you might need Z=12.5 or Z=0 depending on the STL origin. Assume STLs are centered unless observed otherwise).
+- *Correction*: The STLs are likely not centered at origin. You should assume they need to be positioned explicitly.
 
 Key methods:
 - `cq.Assembly()` - Create a new assembly

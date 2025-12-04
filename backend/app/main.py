@@ -257,6 +257,11 @@ class DownloadProjectRequest(BaseModel):
     views_url: Optional[str] = None
     assembly_gif_url: Optional[str] = None
 
+
+class DownloadCSVRequest(BaseModel):
+    """Request body for CSV download endpoint."""
+    code: str
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -945,6 +950,111 @@ async def download_project(request: DownloadProjectRequest):
     return Response(
         content=zip_buffer.getvalue(),
         media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.post("/api/download-csv")
+async def download_csv(request: DownloadCSVRequest):
+    """Generate a CSV file for the assembly."""
+    
+    # Execute code to get the assembly
+    cq = _cached_modules.get("cq")
+    if not cq:
+        import cadquery as cq
+    
+    # Safe builtins
+    safe_builtins = _create_safe_builtins()
+    
+    # Globals for execution
+    globals_dict = {
+        "__builtins__": safe_builtins,
+        "cadquery": cq,
+        "cq": cq,
+        "math": _cached_modules.get("math"),
+    }
+    
+    try:
+        exec(request.code, globals_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Code execution failed: {str(e)}")
+        
+    result = globals_dict.get("result")
+    if not result or not isinstance(result, cq.Assembly):
+        raise HTTPException(status_code=400, detail="Code must define a 'result' variable of type cadquery.Assembly")
+        
+    # Extract blocks
+    blocks = []
+    for child in result.children:
+        # Name format: "goki_block_X_instanceY"
+        name = child.name
+        
+        block_type = "nan"
+        for known_block in ["goki_block_1", "goki_block_2", "goki_block_3", "goki_block_4", 
+                           "goki_block_5", "goki_block_6", "goki_block_7", "goki_block_8"]:
+            if known_block in name:
+                block_type = known_block
+                break
+        
+        if block_type == "nan":
+            continue
+            
+        loc = child.loc
+        # Get position
+        pos = loc.toTuple()[0] # (x, y, z)
+        
+        # Get rotation (Euler angles)
+        try:
+            from OCP.gp import gp_Extrinsic_XYZ
+            r = loc.wrapped.Transformation().GetRotation()
+            u, v, w = r.GetEulerAngles(gp_Extrinsic_XYZ)
+            # Convert to degrees
+            import math
+            u = math.degrees(u)
+            v = math.degrees(v)
+            w = math.degrees(w)
+        except Exception as e:
+            logger.warning(f"Failed to extract rotation for {name}: {e}")
+            u, v, w = 0, 0, 0
+            
+        blocks.append({
+            "type": block_type,
+            "x": pos[0], "y": pos[1], "z": pos[2],
+            "u": u, "v": v, "w": w
+        })
+        
+    # Format CSV
+    # Header: Type;depth;width;height;x-coordinate;y-coordinate;z-coordinate;u-Angle;v-Angle;w-Angle;... (repeated 20 times) ...;PassFail
+    
+    # We need exactly 20 slots
+    csv_parts = []
+    
+    # Header row
+    header_parts = []
+    for _ in range(20):
+        header_parts.append("Type;depth;width;height;x-coordinate;y-coordinate;z-coordinate;u-Angle;v-Angle;w-Angle")
+    header_parts.append("PassFail")
+    csv_content = ";".join(header_parts) + "\n"
+    
+    # Data row
+    data_parts = []
+    for i in range(20):
+        if i < len(blocks):
+            b = blocks[i]
+            # depth, width, height are 0 in example
+            data_parts.append(f"{b['type']};0.0;0.0;0.0;{b['x']:.1f};{b['y']:.1f};{b['z']:.1f};{b['u']:.1f};{b['v']:.1f};{b['w']:.1f}")
+        else:
+            data_parts.append("nan;0;0;0;0;0;0;0;0;0")
+            
+    data_parts.append("1") # PassFail
+    csv_content += ";".join(data_parts)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"design_export_{timestamp}.csv"
+    
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 

@@ -439,3 +439,41 @@ export async function downloadProject({
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
 }
+
+/**
+ * Download the design as a CSV file.
+ */
+export async function downloadCSV(code: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/download-csv`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ code }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download CSV: ${response.status}`);
+  }
+
+  // Trigger download
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  
+  const contentDisposition = response.headers.get('Content-Disposition');
+  let filename = `design_export_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '_')}.csv`;
+  if (contentDisposition) {
+    const match = contentDisposition.match(/filename="?([^"]+)"?/);
+    if (match && match[1]) {
+      filename = match[1];
+    }
+  }
+  
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
