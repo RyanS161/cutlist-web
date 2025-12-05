@@ -3,7 +3,7 @@ import hljs from 'highlight.js/lib/core';
 import python from 'highlight.js/lib/languages/python';
 import 'highlight.js/styles/github-dark.css';
 import './CodePanel.css';
-import { runTests, type TestSuiteResult } from '../services/api';
+import { type TestSuiteResult } from '../services/api';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ActionsPanel } from './ActionsPanel';
 
@@ -40,6 +40,8 @@ interface CodePanelProps {
   onCodeChange: (code: string) => void;
   isStreaming: boolean;
   executionResult?: ExecutionResult;
+  testResults?: TestSuiteResult | null;
+  isRunningTests?: boolean;
   onReviewImage?: (viewsUrl: string, code: string) => void;
   onReviewTestResults?: (testResults: TestSuiteResult, code: string) => void;
   onReviewError?: (error: string, code: string) => void;
@@ -62,6 +64,8 @@ export function CodePanel({
   onCodeChange, 
   isStreaming, 
   executionResult,
+  testResults = null,
+  isRunningTests = false,
   onReviewImage,
   onReviewTestResults,
   onReviewError,
@@ -78,8 +82,6 @@ export function CodePanel({
   const [editedCode, setEditedCode] = useState(code);
   const [copied, setCopied] = useState(false);
   const [showOutput, setShowOutput] = useState(false);
-  const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
-  const [isRunningTests, setIsRunningTests] = useState(false);
   const [isCodeUpdating, setIsCodeUpdating] = useState(false);
   
   // Track if code is actively being updated during streaming
@@ -126,45 +128,6 @@ export function CodePanel({
       console.error('Failed to copy:', err);
     }
   };
-
-  const handleRunTests = useCallback(async () => {
-    if (!code || isRunningTests) return;
-    
-    setIsRunningTests(true);
-    try {
-      const results = await runTests(code);
-      setTestResults(results);
-    } catch (err) {
-      console.error('Failed to run tests:', err);
-      setTestResults({
-        passed: 0,
-        failed: 0,
-        skipped: 0,
-        errors: 1,
-        tests: [{
-          name: 'Assembly Test Suite',
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Failed to run tests',
-        }],
-        success: false,
-      });
-    } finally {
-      setIsRunningTests(false);
-    }
-  }, [code, isRunningTests]);
-
-  // Auto-run tests after execution succeeds
-  const prevExecutionStatus = useRef(executionResult?.status);
-  useEffect(() => {
-    // Run tests when execution transitions to success
-    if (prevExecutionStatus.current !== 'success' && 
-        executionResult?.status === 'success' && 
-        code && 
-        !isRunningTests) {
-      handleRunTests();
-    }
-    prevExecutionStatus.current = executionResult?.status;
-  }, [executionResult?.status, code, isRunningTests, handleRunTests]);
 
   // Handlers for review actions
   const handleReviewImage = useCallback(() => {

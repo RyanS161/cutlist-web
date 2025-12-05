@@ -123,6 +123,111 @@
   color: #64748b;
 }
 
+/* Auto Mode Settings */
+.auto-mode-settings {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: #0f3460;
+  border-radius: 8px;
+  border: 1px solid #1a4a7a;
+}
+
+.auto-mode-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.auto-mode-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.auto-mode-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #e94560;
+  cursor: pointer;
+}
+
+.auto-mode-checkbox-label {
+  font-size: 1rem;
+}
+
+.auto-mode-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  padding-left: 2rem;
+}
+
+.auto-mode-iterations {
+  margin-top: 1rem;
+  padding-left: 2rem;
+}
+
+.auto-mode-iterations label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.iterations-input {
+  width: 60px;
+  padding: 0.375rem 0.5rem;
+  background: #16213e;
+  color: #e2e8f0;
+  border: 1px solid #1a4a7a;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.iterations-input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+/* Auto Mode Status in Header */
+.auto-mode-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  background: #0f3460;
+  border-radius: 6px;
+  border: 1px solid #e94560;
+}
+
+.auto-mode-indicator {
+  font-size: 0.875rem;
+  color: #e94560;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stop-auto-btn {
+  padding: 0.25rem 0.75rem;
+  background: #e94560;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.stop-auto-btn:hover {
+  background: #d63050;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -137,7 +242,6 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #64748b;
   font-size: 1.125rem;
 }
 

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import type { Message } from '../services/api';
-import { streamChat, streamReview, streamQAReview } from '../services/api';
+import { streamChat, streamQAReview } from '../services/api';
 
 // Extended message type to support QA agent
 export interface ExtendedMessage extends Message {
@@ -11,10 +11,24 @@ export interface ExtendedMessage extends Message {
 const CODE_START_PATTERN = /```python\n?/;
 const CODE_END_MARKER = '```';
 
+// Auto mode configuration
+export interface AutoModeConfig {
+  enabled: boolean;
+  maxIterations: number;
+}
+
 interface UseChatOptions {
   systemPrompt?: string;
   onCodeUpdate?: (code: string) => void;
   getCurrentCode?: () => string;
+  autoModeConfig?: AutoModeConfig;
+  onExecutionNeeded?: () => void;
+}
+
+// Callback type for execution completion
+export interface ExecutionCompletionData {
+  viewsUrl: string;
+  testResultsSummary: string;
 }
 
 interface UseChatReturn {
@@ -24,10 +38,14 @@ interface UseChatReturn {
   isQAReviewing: boolean;
   error: string | null;
   sendMessage: (content: string) => Promise<void>;
-  triggerReview: (viewsUrl: string, currentCode: string) => Promise<void>;
   triggerQAReview: (viewsUrl: string, testResultsSummary: string) => Promise<void>;
   clearChat: () => void;
   chatStarted: boolean;
+  // Auto mode
+  autoModeIteration: number;
+  autoModeActive: boolean;
+  stopAutoMode: () => void;
+  onExecutionComplete: (data: ExecutionCompletionData) => void;
 }
 
 /**
@@ -75,10 +93,15 @@ function parseStreamContent(fullContent: string): { displayText: string; code: s
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isReviewing, setIsReviewing] = useState(false);
+  const [isReviewing] = useState(false);
   const [isQAReviewing, setIsQAReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chatStarted, setChatStarted] = useState(false);
+  
+  // Auto mode state
+  const [autoModeIteration, setAutoModeIteration] = useState(0);
+  const [autoModeActive, setAutoModeActive] = useState(false);
+  const autoModeStoppedRef = useRef(false);
   
   // Use ref to track current messages during streaming
   const messagesRef = useRef<ExtendedMessage[]>([]);
@@ -87,6 +110,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   // Store the system prompt for this chat session
   const systemPromptRef = useRef<string | undefined>(options.systemPrompt);
   systemPromptRef.current = options.systemPrompt;
+  
+  // Store auto mode config
+  const autoModeConfigRef = useRef(options.autoModeConfig);
+  autoModeConfigRef.current = options.autoModeConfig;
   
   // Store callbacks
   const onCodeUpdateRef = useRef(options.onCodeUpdate);
@@ -104,6 +131,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     setError(null);
     setChatStarted(true);
     rawContentRef.current = '';
+    
+    // Start auto mode if enabled and this is a fresh start
+    if (autoModeConfigRef.current?.enabled && !autoModeActive) {
+      setAutoModeActive(true);
+      setAutoModeIteration(0);
+      autoModeStoppedRef.current = false;
+    }
     
     // Add user message
     const userMessage: Message = { role: 'user', content: content.trim() };
@@ -173,144 +207,108 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         setIsStreaming(false);
       },
     });
-  }, [isStreaming]);
+  }, [isStreaming, autoModeActive]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
     setError(null);
     setChatStarted(false);
+    setAutoModeIteration(0);
+    setAutoModeActive(false);
+    autoModeStoppedRef.current = false;
     rawContentRef.current = '';
   }, []);
 
   /**
-   * Trigger a design review by sending the rendered image to the AI.
-   * The AI will analyze the image and provide feedback or corrections.
+   * Stop auto mode iteration loop.
    */
-  const triggerReview = useCallback(async (viewsUrl: string, currentCode: string) => {
-    if (isStreaming || isReviewing) return;
-
-    setError(null);
-    setIsReviewing(true);
-    rawContentRef.current = '';
-
-    // Add a system-like message to show review is in progress
-    const reviewMessage: Message = { role: 'model', content: '🔍 **Reviewing design...**' };
-    setMessages((prev) => [...prev, reviewMessage]);
-
-    await streamReview({
-      viewsUrl,
-      currentCode,
-      history: messagesRef.current.slice(0, -1), // Exclude the review message we just added
-      systemPrompt: systemPromptRef.current,
-      onChunk: (chunk) => {
-        // Accumulate raw content
-        rawContentRef.current += chunk;
-
-        // Parse the content for code blocks
-        const { displayText, code } = parseStreamContent(rawContentRef.current);
-
-        // Update code panel if we have new code
-        if (code !== null && onCodeUpdateRef.current) {
-          const cleanCode = code
-            .replace(/<[^>]*>/g, '')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&quot;/g, '"');
-          onCodeUpdateRef.current(cleanCode);
-        }
-
-        // Update the review message with content
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (updated[lastIdx]?.role === 'model') {
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              content: '🔍 **Design Review:**\n\n' + displayText,
-            };
-          }
-          return updated;
-        });
-      },
-      onError: (err) => {
-        setError(err.message);
-        setIsReviewing(false);
-      },
-      onComplete: () => {
-        setIsReviewing(false);
-      },
-    });
-  }, [isStreaming, isReviewing]);
+  const stopAutoMode = useCallback(() => {
+    autoModeStoppedRef.current = true;
+    setAutoModeActive(false);
+    setAutoModeIteration(0);
+  }, []);
 
   /**
    * Trigger a QA review by sending the design to a fresh QA agent.
    * The QA agent will analyze the image and test results, providing independent feedback.
    * After the QA review completes, the feedback is automatically sent to the Designer Agent.
+   * Returns true if QA passed, false otherwise.
    */
-  const triggerQAReview = useCallback(async (viewsUrl: string, testResultsSummary: string) => {
-    if (isStreaming || isReviewing || isQAReviewing) return;
+  const triggerQAReviewInternal = useCallback(async (viewsUrl: string, testResultsSummary: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (isStreaming || isReviewing || isQAReviewing) {
+        resolve(false);
+        return;
+      }
 
-    setError(null);
-    setIsQAReviewing(true);
-    rawContentRef.current = '';
+      setError(null);
+      setIsQAReviewing(true);
+      rawContentRef.current = '';
 
-    // Extract only user messages for context
-    const userMessages = messagesRef.current
-      .filter(msg => msg.role === 'user')
-      .map(msg => msg.content);
+      // Extract only user messages for context
+      const userMessages = messagesRef.current
+        .filter(msg => msg.role === 'user')
+        .map(msg => msg.content);
 
-    // Add a QA agent message to show review is in progress
-    const qaMessage: ExtendedMessage = { 
-      role: 'model', 
-      content: '🔍 **QA Agent reviewing design...**',
-      agentType: 'qa'
-    };
-    setMessages((prev) => [...prev, qaMessage]);
+      // Add a QA agent message to show review is in progress
+      const qaMessage: ExtendedMessage = { 
+        role: 'model', 
+        content: '🔍 **QA Agent reviewing design...**',
+        agentType: 'qa'
+      };
+      setMessages((prev) => [...prev, qaMessage]);
 
-    let qaFeedback = '';
+      let qaFeedback = '';
 
-    await streamQAReview({
-      viewsUrl,
-      testResultsSummary,
-      userMessages,
-      onChunk: (chunk) => {
-        // Accumulate raw content
-        rawContentRef.current += chunk;
-        qaFeedback = rawContentRef.current.trim();
+      streamQAReview({
+        viewsUrl,
+        testResultsSummary,
+        userMessages,
+        onChunk: (chunk: string) => {
+          // Accumulate raw content
+          rawContentRef.current += chunk;
+          qaFeedback = rawContentRef.current.trim();
 
-        // QA agent shouldn't provide code, so just use raw content
-        const displayText = qaFeedback;
+          // QA agent shouldn't provide code, so just use raw content
+          const displayText = qaFeedback;
 
-        // Update the QA message with content
-        setMessages((prev) => {
-          const updated = [...prev];
-          const lastIdx = updated.length - 1;
-          if (updated[lastIdx]?.role === 'model' && updated[lastIdx]?.agentType === 'qa') {
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              content: displayText,
-            };
+          // Update the QA message with content
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (updated[lastIdx]?.role === 'model' && updated[lastIdx]?.agentType === 'qa') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: displayText,
+              };
+            }
+            return updated;
+          });
+        },
+        onError: (err: Error) => {
+          setError(err.message);
+          setIsQAReviewing(false);
+          resolve(false);
+        },
+        onComplete: async () => {
+          setIsQAReviewing(false);
+          
+          // Check if QA passed
+          const qaPassed = qaFeedback.includes('QA_PASSED') || qaFeedback.includes('QA PASSED');
+          
+          if (qaPassed) {
+            resolve(true);
+            return;
           }
-          return updated;
-        });
-      },
-      onError: (err) => {
-        setError(err.message);
-        setIsQAReviewing(false);
-      },
-      onComplete: async () => {
-        setIsQAReviewing(false);
-        
-        // Automatically send QA feedback to the Designer Agent
-        if (qaFeedback) {
-          // Small delay to ensure UI updates before starting designer response
-          await new Promise(resolve => setTimeout(resolve, 100));
           
-          // Simple prompt for the designer to act on the QA feedback
-          const designerPrompt = "Please address the QA Agent's feedback and update the code.";
-          
-          setTimeout(() => {
+          // Automatically send QA feedback to the Designer Agent
+          if (qaFeedback) {
+            // Small delay to ensure UI updates before starting designer response
+            await new Promise(r => setTimeout(r, 100));
+            
+            // Simple prompt for the designer to act on the QA feedback
+            const designerPrompt = "Please address the QA Agent's feedback and update the code.";
+            
             // Get current code to send with the message
             let currentCode = getCurrentCodeRef.current?.();
             if (currentCode) {
@@ -344,7 +342,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
               history: historyWithQA,
               systemPrompt: systemPromptRef.current,
               currentCode,
-              onChunk: (chunk) => {
+              onChunk: (chunk: string) => {
                 rawContentRef.current += chunk;
                 const { displayText, code } = parseStreamContent(rawContentRef.current);
                 
@@ -367,19 +365,71 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                   return updated;
                 });
               },
-              onError: (err) => {
+              onError: (err: Error) => {
                 setError(err.message);
                 setIsStreaming(false);
+                resolve(false);
               },
               onComplete: () => {
                 setIsStreaming(false);
+                resolve(false);
               },
             });
-          }, 100);
-        }
-      },
+          } else {
+            resolve(false);
+          }
+        },
+      });
     });
   }, [isStreaming, isReviewing, isQAReviewing]);
+
+  /**
+   * Public wrapper for triggerQAReview that doesn't return a promise result.
+   */
+  const triggerQAReview = useCallback(async (viewsUrl: string, testResultsSummary: string) => {
+    await triggerQAReviewInternal(viewsUrl, testResultsSummary);
+  }, [triggerQAReviewInternal]);
+
+  /**
+   * Callback to be called when execution and tests complete.
+   * This is the explicit signal that auto mode waits for.
+   */
+  const onExecutionComplete = useCallback(async (data: ExecutionCompletionData) => {
+    // Only proceed if auto mode is active and not stopped
+    if (!autoModeConfigRef.current?.enabled || !autoModeActive || autoModeStoppedRef.current) {
+      return;
+    }
+
+    const { viewsUrl, testResultsSummary } = data;
+    
+    // Trigger QA review and check if passed
+    const qaPassed = await triggerQAReviewInternal(viewsUrl, testResultsSummary);
+    
+    if (qaPassed || autoModeStoppedRef.current) {
+      // QA passed or stopped - end auto mode
+      setAutoModeActive(false);
+      setAutoModeIteration(0);
+      return;
+    }
+    
+    // Increment iteration
+    setAutoModeIteration(prev => {
+      const next = prev + 1;
+      const maxIterations = autoModeConfigRef.current?.maxIterations || 3;
+      
+      if (next >= maxIterations) {
+        // Reached max iterations - end auto mode
+        setAutoModeActive(false);
+        return 0;
+      }
+      
+      return next;
+    });
+    
+    // The designer agent has already responded (in triggerQAReviewInternal)
+    // The execution/test will happen automatically via the existing useEffect in ChatWindow
+    // which will call onExecutionComplete again when ready
+  }, [autoModeActive, triggerQAReviewInternal]);
 
   return {
     messages,
@@ -388,9 +438,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     isQAReviewing,
     error,
     sendMessage,
-    triggerReview,
     triggerQAReview,
     clearChat,
     chatStarted,
+    // Auto mode
+    autoModeIteration,
+    autoModeActive,
+    stopAutoMode,
+    onExecutionComplete,
   };
 }

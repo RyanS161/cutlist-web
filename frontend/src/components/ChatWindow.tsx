@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
-import { useChat } from '../hooks/useChat';
-import { getDefaultSystemPrompt, executeCode, downloadProject, type TestSuiteResult } from '../services/api';
+import { useChat, type AutoModeConfig } from '../hooks/useChat';
+import { getDefaultSystemPrompt, executeCode, downloadProject, runTests, type TestSuiteResult } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
@@ -56,6 +56,12 @@ export function ChatWindow() {
   const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
   
+  // Auto mode state
+  const [autoModeEnabled, setAutoModeEnabled] = useState(false);
+  const [autoModeMaxIterations, setAutoModeMaxIterations] = useState(3);
+  const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  
   // History state
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -64,6 +70,12 @@ export function ChatWindow() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
+  
+  // Auto mode config
+  const autoModeConfig: AutoModeConfig = {
+    enabled: autoModeEnabled,
+    maxIterations: autoModeMaxIterations,
+  };
   
   // Add code to history
   const addToHistory = useCallback((code: string) => {
@@ -129,15 +141,68 @@ export function ChatWindow() {
     sendMessage, 
     triggerQAReview, 
     clearChat, 
-    chatStarted 
+    chatStarted,
+    autoModeIteration,
+    autoModeActive,
+    stopAutoMode,
+    onExecutionComplete,
   } = useChat({ 
     systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
+    autoModeConfig,
   });
+  
+  // Run tests and call onExecutionComplete when done
+  const runTestsAndNotify = useCallback(async (code: string, viewsUrl: string) => {
+    if (isRunningTests) return;
+    
+    setIsRunningTests(true);
+    try {
+      const results = await runTests(code);
+      setTestResults(results);
+      
+      // If auto mode is active, notify that execution is complete
+      if (autoModeActive && viewsUrl) {
+        // Format test results summary for QA agent
+        const failedTestsDetails = results.tests
+          .filter(t => t.status !== 'passed')
+          .map(t => {
+            let detail = `- ${t.name}: ${t.message || t.status}`;
+            if (t.long_message) {
+              detail += `\n  ${t.long_message.replace(/\n/g, '\n  ')}`;
+            }
+            return detail;
+          })
+          .join('\n\n');
+        const summary = `Tests: ${results.passed} passed, ${results.failed} failed, ${results.errors} errors\n\n${failedTestsDetails ? `Failed Tests:\n${failedTestsDetails}` : 'All tests passed.'}`;
+        
+        onExecutionComplete({ viewsUrl, testResultsSummary: summary });
+      }
+    } catch (err) {
+      console.error('Failed to run tests:', err);
+      setTestResults({
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        errors: 1,
+        tests: [{
+          name: 'Assembly Test Suite',
+          status: 'error',
+          message: err instanceof Error ? err.message : 'Failed to run tests',
+        }],
+        success: false,
+      });
+    } finally {
+      setIsRunningTests(false);
+    }
+  }, [isRunningTests, autoModeActive, onExecutionComplete]);
   
   // Track streaming state to save history and run code when done
   const prevStreamingRef = useRef(isStreaming);
+  const executionResultRef = useRef(executionResult);
+  executionResultRef.current = executionResult;
+  
   useEffect(() => {
     if (prevStreamingRef.current && !isStreaming && designCode) {
       // Streaming just finished
@@ -146,6 +211,18 @@ export function ChatWindow() {
     }
     prevStreamingRef.current = isStreaming;
   }, [isStreaming, designCode, addToHistory, runCode]);
+  
+  // Track execution completion to run tests
+  const prevExecutionStatus = useRef(executionResult?.status);
+  useEffect(() => {
+    // Run tests when execution transitions to success
+    if (prevExecutionStatus.current !== 'success' && 
+        executionResult?.status === 'success' && 
+        designCode) {
+      runTestsAndNotify(designCode, executionResult.viewsUrl || '');
+    }
+    prevExecutionStatus.current = executionResult?.status;
+  }, [executionResult?.status, executionResult?.viewsUrl, designCode, runTestsAndNotify]);
 
   // History navigation
   const handleUndo = useCallback(() => {
@@ -291,6 +368,7 @@ Please analyze the error and update the code to fix it.`;
     clearChat();
     setDesignCode('');
     setExecutionResult({ status: 'idle' });
+    setTestResults(null);
     // Reload default system prompt
     setIsLoadingPrompt(true);
     getDefaultSystemPrompt()
@@ -320,6 +398,19 @@ Please analyze the error and update the code to fix it.`;
       <div className="chat-container">
         <div className="chat-header">
           <h1>Cutlist</h1>
+          {autoModeActive && (
+            <div className="auto-mode-status">
+              <span className="auto-mode-indicator">
+                🔄 Auto Mode: Iteration {autoModeIteration + 1}/{autoModeMaxIterations}
+              </span>
+              <button 
+                onClick={stopAutoMode}
+                className="stop-auto-btn"
+              >
+                Stop
+              </button>
+            </div>
+          )}
           <button 
             onClick={handleClearChat} 
             className="clear-btn"
@@ -348,6 +439,40 @@ Please analyze the error and update the code to fix it.`;
             />
             <div className="system-prompt-footer">
               <span className="char-count">{systemPrompt.length} characters</span>
+            </div>
+            
+            {/* Auto Mode Settings */}
+            <div className="auto-mode-settings">
+              <div className="auto-mode-toggle">
+                <label className="auto-mode-label">
+                  <input
+                    type="checkbox"
+                    checked={autoModeEnabled}
+                    onChange={(e) => setAutoModeEnabled(e.target.checked)}
+                    disabled={isLoadingPrompt}
+                  />
+                  <span className="auto-mode-checkbox-label">Enable Auto Mode</span>
+                </label>
+                <p className="auto-mode-hint">
+                  Automatically iterate: Designer → Execute → QA Review → Designer...
+                </p>
+              </div>
+              {autoModeEnabled && (
+                <div className="auto-mode-iterations">
+                  <label>
+                    Max Iterations:
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={autoModeMaxIterations}
+                      onChange={(e) => setAutoModeMaxIterations(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                      disabled={isLoadingPrompt}
+                      className="iterations-input"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -455,6 +580,8 @@ Please analyze the error and update the code to fix it.`;
           onCodeChange={handleUserCodeChange}
           isStreaming={isStreaming || isReviewing || isQAReviewing}
           executionResult={executionResult}
+          testResults={testResults}
+          isRunningTests={isRunningTests}
           onReviewImage={handleReviewImage}
           onReviewTestResults={handleReviewTestResults}
           onReviewError={handleReviewError}
