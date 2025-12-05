@@ -62,6 +62,11 @@ export function ChatWindow() {
   const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
   
+  // Generation tracking state
+  const [generationStartTime, setGenerationStartTime] = useState<number | null>(null);
+  const [generationEndTime, setGenerationEndTime] = useState<number | null>(null);
+  const [initialPrompt, setInitialPrompt] = useState<string>('');
+  
   // History state
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -132,6 +137,11 @@ export function ChatWindow() {
     return designCodeRef.current;
   }, []);
   
+  // Callback when auto mode ends - capture generation end time
+  const handleAutoModeEnd = useCallback(() => {
+    setGenerationEndTime(Date.now());
+  }, []);
+  
   const { 
     messages, 
     isStreaming, 
@@ -151,6 +161,7 @@ export function ChatWindow() {
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
     autoModeConfig,
+    onAutoModeEnd: handleAutoModeEnd,
   });
   
   // Run tests and call onExecutionComplete when done
@@ -178,6 +189,9 @@ export function ChatWindow() {
         const summary = `Tests: ${results.passed} passed, ${results.failed} failed, ${results.errors} errors\n\n${failedTestsDetails ? `Failed Tests:\n${failedTestsDetails}` : 'All tests passed.'}`;
         
         onExecutionComplete({ viewsUrl, testResultsSummary: summary });
+      } else if (!autoModeActive) {
+        // Not in auto mode - capture end time when tests complete
+        setGenerationEndTime(Date.now());
       }
     } catch (err) {
       console.error('Failed to run tests:', err);
@@ -353,6 +367,13 @@ Please analyze the error and update the code to fix it.`;
     
     const message = input;
     setInput('');
+    
+    // Track generation start time and initial prompt on first message
+    if (!chatStarted) {
+      setGenerationStartTime(Date.now());
+      setInitialPrompt(message);
+    }
+    
     await sendMessage(message);
   };
 
@@ -369,6 +390,9 @@ Please analyze the error and update the code to fix it.`;
     setDesignCode('');
     setExecutionResult({ status: 'idle' });
     setTestResults(null);
+    setGenerationStartTime(null);
+    setGenerationEndTime(null);
+    setInitialPrompt('');
     // Reload default system prompt
     setIsLoadingPrompt(true);
     getDefaultSystemPrompt()
@@ -377,12 +401,26 @@ Please analyze the error and update the code to fix it.`;
       .finally(() => setIsLoadingPrompt(false));
   };
   
+  // Handle quick prompt click - also track generation time
+  const handleQuickPrompt = useCallback((prompt: string) => {
+    setGenerationStartTime(Date.now());
+    setInitialPrompt(prompt);
+    sendMessage(prompt);
+  }, [sendMessage]);
+  
   // Handle project download
   const handleDownloadProject = useCallback(async () => {
     try {
+      // Calculate generation time in seconds (use captured end time, not current time)
+      const endTime = generationEndTime || Date.now();
+      const generationTime = generationStartTime 
+        ? (endTime - generationStartTime) / 1000 
+        : 0;
+      
       await downloadProject({
         code: designCode,
-        history: messages,
+        initialPrompt: initialPrompt,
+        generationTime: generationTime,
         stlUrl: executionResult.stlUrl,
         viewsUrl: executionResult.viewsUrl,
         assemblyGifUrl: executionResult.assemblyGifUrl,
@@ -391,7 +429,7 @@ Please analyze the error and update the code to fix it.`;
       console.error('Failed to download project:', err);
       alert('Failed to download project. See console for details.');
     }
-  }, [designCode, messages, executionResult]);
+  }, [designCode, initialPrompt, generationStartTime, generationEndTime, executionResult]);
 
   return (
     <div className="app-container">
@@ -537,35 +575,35 @@ Please analyze the error and update the code to fix it.`;
             <span className="quick-prompts-label">Try:</span>
             <button 
               className="quick-prompt-btn"
-              onClick={() => sendMessage("A chair with a slatted back")}
+              onClick={() => handleQuickPrompt("A chair with a slatted back")}
               disabled={isLoadingPrompt}
             >
               A chair with a slatted back
             </button>
             <button 
               className="quick-prompt-btn"
-              onClick={() => sendMessage("A birdhouse")}
+              onClick={() => handleQuickPrompt("A birdhouse")}
               disabled={isLoadingPrompt}
             >
               A birdhouse
             </button>
             <button 
               className="quick-prompt-btn"
-              onClick={() => sendMessage("An open bookshelf with four shelves")}
+              onClick={() => handleQuickPrompt("An open bookshelf with four shelves")}
               disabled={isLoadingPrompt}
             >
               An open bookshelf with four shelves
             </button>
             <button 
               className="quick-prompt-btn"
-              onClick={() => sendMessage("The letters ETH")}
+              onClick={() => handleQuickPrompt("The letters ETH")}
               disabled={isLoadingPrompt}
             >
               The letters ETH
             </button>
             <button 
               className="quick-prompt-btn"
-              onClick={() => sendMessage("The letter T")}
+              onClick={() => handleQuickPrompt("The letter T")}
               disabled={isLoadingPrompt}
             >
               The letter T

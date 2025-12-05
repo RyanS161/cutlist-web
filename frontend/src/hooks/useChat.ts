@@ -23,6 +23,7 @@ interface UseChatOptions {
   getCurrentCode?: () => string;
   autoModeConfig?: AutoModeConfig;
   onExecutionNeeded?: () => void;
+  onAutoModeEnd?: () => void;
 }
 
 // Callback type for execution completion
@@ -121,6 +122,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   
   const getCurrentCodeRef = useRef(options.getCurrentCode);
   getCurrentCodeRef.current = options.getCurrentCode;
+  
+  const onAutoModeEndRef = useRef(options.onAutoModeEnd);
+  onAutoModeEndRef.current = options.onAutoModeEnd;
   
   // Track raw content for code extraction
   const rawContentRef = useRef('');
@@ -226,6 +230,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     autoModeStoppedRef.current = true;
     setAutoModeActive(false);
     setAutoModeIteration(0);
+    onAutoModeEndRef.current?.();
   }, []);
 
   /**
@@ -409,6 +414,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       // QA passed or stopped - end auto mode
       setAutoModeActive(false);
       setAutoModeIteration(0);
+      onAutoModeEndRef.current?.();
       return;
     }
     
@@ -420,6 +426,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
       if (next >= maxIterations) {
         // Reached max iterations - end auto mode
         setAutoModeActive(false);
+        onAutoModeEndRef.current?.();
         return 0;
       }
       

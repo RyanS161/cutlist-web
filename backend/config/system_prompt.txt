@@ -37,7 +37,7 @@ Key methods:
 - `cq.Assembly()` - Create a new assembly
 - `assembly.add(part, name="part_name", loc=cq.Location((x, y, z)))` - Add a part at a position
 - `cq.Location((x, y, z))` - Define a translation
-- `cq.Location((x, y, z), (axis_x, axis_y, axis_z), angle_degrees)` - Define translation + rotation
+- `cq.Location((x, y, z), (axis_x, axis_y, axis_z), angle_degrees)` - Define translation + rotation (do not use keyword args)
 
 It is important that the final design be captured in a variable named `result`, as this will be rendered for the user.
 

@@ -295,7 +295,8 @@ export async function streamQAReview({
 
 export interface DownloadProjectOptions {
   code: string;
-  history: Message[];
+  initialPrompt: string;
+  generationTime: number;  // Time in seconds
   stlUrl?: string;
   viewsUrl?: string;
   assemblyGifUrl?: string;
@@ -306,7 +307,8 @@ export interface DownloadProjectOptions {
  */
 export async function downloadProject({
   code,
-  history,
+  initialPrompt,
+  generationTime,
   stlUrl,
   viewsUrl,
   assemblyGifUrl,
@@ -318,7 +320,8 @@ export async function downloadProject({
     },
     body: JSON.stringify({
       code,
-      history,
+      initial_prompt: initialPrompt,
+      generation_time: generationTime,
       stl_url: stlUrl,
       views_url: viewsUrl,
       assembly_gif_url: assemblyGifUrl,
@@ -334,18 +337,7 @@ export async function downloadProject({
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  
-  // Get filename from header if available, otherwise generate one
-  const contentDisposition = response.headers.get('Content-Disposition');
-  let filename = `project_export_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '_')}.zip`;
-  if (contentDisposition) {
-    const match = contentDisposition.match(/filename="?([^"]+)"?/);
-    if (match && match[1]) {
-      filename = match[1];
-    }
-  }
-  
-  a.download = filename;
+  a.download = 'design.zip';
   document.body.appendChild(a);
   a.click();
   window.URL.revokeObjectURL(url);

@@ -252,7 +252,8 @@ class QAReviewRequest(BaseModel):
 class DownloadProjectRequest(BaseModel):
     """Request body for project download endpoint."""
     code: str
-    history: List[Message]
+    initial_prompt: str
+    generation_time: float  # Time in seconds
     stl_url: Optional[str] = None
     views_url: Optional[str] = None
     assembly_gif_url: Optional[str] = None
@@ -893,59 +894,53 @@ async def qa_review_stream(request: Request, qa_request: QAReviewRequest):
 @app.post("/api/download-project")
 async def download_project(request: DownloadProjectRequest):
     """Generate a ZIP file containing all project assets."""
+    import json
     
     # Create a BytesIO object to store the zip file
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        # 1. Add code
-        zip_file.writestr("design.py", request.code)
+        # All files go into a "design" folder
+        folder = "design"
         
-        # 2. Add chat history
-        history_md = "# Chat History\n\n"
-        for msg in request.history:
-            role = msg.role
-            if hasattr(msg, 'agentType') and msg.agentType:
-                role = f"{msg.agentType.title()} Agent"
-            elif role == 'model':
-                role = "Designer Agent"
-            else:
-                role = "User"
-                
-            history_md += f"## {role}\n\n{msg.content}\n\n---\n\n"
-        zip_file.writestr("chat_history.md", history_md)
+        # 1. Add design code as .txt
+        zip_file.writestr(f"{folder}/design.txt", request.code)
         
-        # 3. Add STL file
+        # 2. Add info.json with generation time and prompt
+        info_data = {
+            "generation_time": request.generation_time,
+            "prompt": request.initial_prompt
+        }
+        zip_file.writestr(f"{folder}/info.json", json.dumps(info_data, indent=2))
+        
+        # 3. Add STL file as design.stl
         if request.stl_url:
             filename = request.stl_url.split("/")[-1]
             file_path = STL_DIR / filename
             if file_path.exists():
-                zip_file.write(file_path, filename)
+                zip_file.write(file_path, f"{folder}/design.stl")
         
-        # 4. Add Views Image
+        # 4. Add Views Image as design.png
         if request.views_url:
             filename = request.views_url.split("/")[-1]
             file_path = SVG_DIR / filename
             if file_path.exists():
-                zip_file.write(file_path, filename)
+                zip_file.write(file_path, f"{folder}/design.png")
                 
-        # 5. Add Assembly GIF
+        # 5. Add Assembly GIF as design.gif
         if request.assembly_gif_url:
             filename = request.assembly_gif_url.split("/")[-1]
             file_path = SVG_DIR / filename
             if file_path.exists():
-                zip_file.write(file_path, filename)
+                zip_file.write(file_path, f"{folder}/design.gif")
 
     # Reset buffer position
     zip_buffer.seek(0)
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"project_export_{timestamp}.zip"
-    
     return Response(
         content=zip_buffer.getvalue(),
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": "attachment; filename=design.zip"}
     )
 
 
