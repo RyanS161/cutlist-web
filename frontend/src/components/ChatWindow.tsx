@@ -57,7 +57,7 @@ export function ChatWindow() {
   const [input, setInput] = useState('');
   
   // Auto mode state
-  const [autoModeEnabled, setAutoModeEnabled] = useState(false);
+  const [autoModeEnabled, setAutoModeEnabled] = useState(true);
   const [autoModeMaxIterations, setAutoModeMaxIterations] = useState(3);
   const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);

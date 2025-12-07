@@ -48,7 +48,7 @@ class GeminiService:
             # Handle QA agent messages - convert to user message with QA prefix
             if role == "qa_agent":
                 qa_content = f"""[QA AGENT REVIEW]
-The QA Agent has independently reviewed the design and provided the following feedback. Please address any issues and update the code accordingly:
+The QA Agent has reviewed the design and provided the following feedback. Please address any issues and update the code accordingly. Keep in mind that the QA agent may hallucinate details, so verify all suggestions carefully.
 
 {content}
 
