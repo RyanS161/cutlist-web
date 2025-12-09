@@ -64,6 +64,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  align-items: center;
   padding: 1.5rem;
   overflow-y: auto;
 }
@@ -130,6 +132,8 @@
   background: #0f3460;
   border-radius: 8px;
   border: 1px solid #1a4a7a;
+  width: 100%;
+  max-width: 400px;
 }
 
 .auto-mode-toggle {
@@ -450,6 +454,15 @@
   border-top: 1px solid #0f3460;
 }
 
+.input-form.centered-input {
+  width: 100%;
+  max-width: 500px;
+  margin-top: 1.5rem;
+  border-top: none;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
 .message-input {
   flex: 1;
   padding: 0.75rem 1rem;
@@ -505,6 +518,12 @@
   gap: 0.5rem;
   padding: 0.75rem 1.5rem 1rem;
   align-items: center;
+}
+
+.quick-prompts.centered-prompts {
+  justify-content: center;
+  padding: 1rem 0;
+  max-width: 500px;
 }
 
 .quick-prompts-label {

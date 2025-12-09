@@ -18,7 +18,6 @@ export interface AutoModeConfig {
 }
 
 interface UseChatOptions {
-  systemPrompt?: string;
   onCodeUpdate?: (code: string) => void;
   getCurrentCode?: () => string;
   autoModeConfig?: AutoModeConfig;
@@ -108,10 +107,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
   const messagesRef = useRef<ExtendedMessage[]>([]);
   messagesRef.current = messages;
   
-  // Store the system prompt for this chat session
-  const systemPromptRef = useRef<string | undefined>(options.systemPrompt);
-  systemPromptRef.current = options.systemPrompt;
-  
   // Store auto mode config
   const autoModeConfigRef = useRef(options.autoModeConfig);
   autoModeConfigRef.current = options.autoModeConfig;
@@ -169,7 +164,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     await streamChat({
       message: content.trim(),
       history: updatedMessages.slice(0, -1), // Don't include the message we just added
-      systemPrompt: systemPromptRef.current,
       currentCode,
       onChunk: (chunk) => {
         // Accumulate raw content
@@ -345,7 +339,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             streamChat({
               message: designerPrompt,
               history: historyWithQA,
-              systemPrompt: systemPromptRef.current,
               currentCode,
               onChunk: (chunk: string) => {
                 rawContentRef.current += chunk;

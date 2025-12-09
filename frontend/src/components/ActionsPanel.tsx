@@ -50,7 +50,7 @@ export function ActionsPanel({
           <span className="action-icon">🤖</span>
           <span className="action-text">Trigger QA Agent Review</span>
         </button>
-        <button
+        {/* <button
           onClick={onReviewImage}
           disabled={!canReviewImage || isAnyReviewing}
           className="action-btn review-image-btn"
@@ -65,7 +65,7 @@ export function ActionsPanel({
         >
           <span className="action-icon">📋</span>
           <span className="action-text">Send Test Results to Agent for Review</span>
-        </button>
+        </button> */}
         {isAnyReviewing && (
           <div className="reviewing-indicator">
             <span className="reviewing-spinner">⟳</span>

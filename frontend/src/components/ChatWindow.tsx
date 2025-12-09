@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useChat, type AutoModeConfig } from '../hooks/useChat';
-import { getDefaultSystemPrompt, executeCode, downloadProject, runTests, type TestSuiteResult } from '../services/api';
+import { executeCode, downloadProject, runTests, type TestSuiteResult } from '../services/api';
 import { CodePanel, type ExecutionResult } from './CodePanel';
 import './ChatWindow.css';
 
@@ -50,15 +50,12 @@ function MessageContent({ content }: { content: string }) {
  * Chat window component with message display, code panel, and input.
  */
 export function ChatWindow() {
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [isLoadingPrompt, setIsLoadingPrompt] = useState(true);
   const [designCode, setDesignCode] = useState('');
   const [executionResult, setExecutionResult] = useState<ExecutionResult>({ status: 'idle' });
   const [input, setInput] = useState('');
   
   // Auto mode state
-  const [autoModeEnabled, setAutoModeEnabled] = useState(true);
-  const [autoModeMaxIterations, setAutoModeMaxIterations] = useState(3);
+  const [autoModeEnabled, setAutoModeEnabled] = useState(false);
   const [testResults, setTestResults] = useState<TestSuiteResult | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
   
@@ -76,10 +73,10 @@ export function ChatWindow() {
   const designCodeRef = useRef(designCode);
   designCodeRef.current = designCode;
   
-  // Auto mode config
+  // Auto mode config (always 3 iterations)
   const autoModeConfig: AutoModeConfig = {
     enabled: autoModeEnabled,
-    maxIterations: autoModeMaxIterations,
+    maxIterations: 3,
   };
   
   // Add code to history
@@ -157,7 +154,6 @@ export function ChatWindow() {
     stopAutoMode,
     onExecutionComplete,
   } = useChat({ 
-    systemPrompt,
     onCodeUpdate: handleCodeUpdate,
     getCurrentCode,
     autoModeConfig,
@@ -325,14 +321,6 @@ Please analyze the error and update the code to fix it.`;
     triggerQAReview(viewsUrl, testResultsSummary);
   }, [triggerQAReview]);
 
-  // Load default system prompt on mount
-  useEffect(() => {
-    getDefaultSystemPrompt()
-      .then(setSystemPrompt)
-      .catch((err) => console.error('Failed to load system prompt:', err))
-      .finally(() => setIsLoadingPrompt(false));
-  }, []);
-
   // Track if user is near bottom of chat for smart auto-scroll
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -393,12 +381,6 @@ Please analyze the error and update the code to fix it.`;
     setGenerationStartTime(null);
     setGenerationEndTime(null);
     setInitialPrompt('');
-    // Reload default system prompt
-    setIsLoadingPrompt(true);
-    getDefaultSystemPrompt()
-      .then(setSystemPrompt)
-      .catch((err) => console.error('Failed to load system prompt:', err))
-      .finally(() => setIsLoadingPrompt(false));
   };
   
   // Handle quick prompt click - also track generation time
@@ -439,7 +421,7 @@ Please analyze the error and update the code to fix it.`;
           {autoModeActive && (
             <div className="auto-mode-status">
               <span className="auto-mode-indicator">
-                🔄 Auto Mode: Iteration {autoModeIteration + 1}/{autoModeMaxIterations}
+                🔄 Auto Mode: Iteration {autoModeIteration + 1}/3
               </span>
               <button 
                 onClick={stopAutoMode}
@@ -460,25 +442,60 @@ Please analyze the error and update the code to fix it.`;
 
         {!chatStarted ? (
           <div className="system-prompt-container">
-            <div className="system-prompt-header">
-              <h2>System Prompt</h2>
-              <p className="system-prompt-hint">
-                Customize the AI's behavior and personality before starting the chat.
-                This cannot be changed once the conversation begins.
-              </p>
-            </div>
-            <textarea
-              className="system-prompt-input"
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder={isLoadingPrompt ? 'Loading default prompt...' : 'Enter system prompt...'}
-              disabled={isLoadingPrompt}
-              rows={8}
-            />
-            <div className="system-prompt-footer">
-              <span className="char-count">{systemPrompt.length} characters</span>
-            </div>
+            <form onSubmit={handleSubmit} className="input-form centered-input">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Describe what you want to build..."
+                disabled={isStreaming || isReviewing || isQAReviewing}
+                rows={1}
+                className="message-input"
+              />
+              <button 
+                type="submit" 
+                disabled={!input.trim() || isStreaming || isReviewing || isQAReviewing}
+                className="send-btn"
+              >
+                {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : isQAReviewing ? 'QA Reviewing...' : 'Start Design'}
+              </button>
+            </form>
             
+            <div className="quick-prompts centered-prompts">
+              <span className="quick-prompts-label">Try:</span>
+              <button 
+                className="quick-prompt-btn"
+                onClick={() => handleQuickPrompt("A chair with a slatted back")}
+              >
+                A chair with a slatted back
+              </button>
+              <button 
+                className="quick-prompt-btn"
+                onClick={() => handleQuickPrompt("A birdhouse")}
+              >
+                A birdhouse
+              </button>
+              <button 
+                className="quick-prompt-btn"
+                onClick={() => handleQuickPrompt("An open bookshelf with four shelves")}
+              >
+                An open bookshelf with four shelves
+              </button>
+              <button 
+                className="quick-prompt-btn"
+                onClick={() => handleQuickPrompt("The letters ETH")}
+              >
+                The letters ETH
+              </button>
+              <button 
+                className="quick-prompt-btn"
+                onClick={() => handleQuickPrompt("The letter T")}
+              >
+                The letter T
+              </button>
+            </div>
+
             {/* Auto Mode Settings */}
             <div className="auto-mode-settings">
               <div className="auto-mode-toggle">
@@ -487,7 +504,6 @@ Please analyze the error and update the code to fix it.`;
                     type="checkbox"
                     checked={autoModeEnabled}
                     onChange={(e) => setAutoModeEnabled(e.target.checked)}
-                    disabled={isLoadingPrompt}
                   />
                   <span className="auto-mode-checkbox-label">Enable Auto Mode</span>
                 </label>
@@ -495,25 +511,10 @@ Please analyze the error and update the code to fix it.`;
                   Automatically iterate: Designer → Execute → QA Review → Designer...
                 </p>
               </div>
-              {autoModeEnabled && (
-                <div className="auto-mode-iterations">
-                  <label>
-                    Max Iterations:
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={autoModeMaxIterations}
-                      onChange={(e) => setAutoModeMaxIterations(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-                      disabled={isLoadingPrompt}
-                      className="iterations-input"
-                    />
-                  </label>
-                </div>
-              )}
             </div>
           </div>
         ) : (
+          <>
           <div 
             className="messages-container"
             ref={messagesContainerRef}
@@ -538,7 +539,6 @@ Please analyze the error and update the code to fix it.`;
             ))}
             <div ref={messagesEndRef} />
           </div>
-        )}
 
         {error && (
           <div className="error-banner">
@@ -553,62 +553,20 @@ Please analyze the error and update the code to fix it.`;
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={chatStarted 
-              ? "Chat with the designer..."
-              : "Describe what you want to build..."
-            }
-            disabled={isStreaming || isReviewing || isQAReviewing || isLoadingPrompt}
+            placeholder="Chat with the designer..."
+            disabled={isStreaming || isReviewing || isQAReviewing}
             rows={1}
             className="message-input"
           />
           <button 
             type="submit" 
-            disabled={!input.trim() || isStreaming || isReviewing || isQAReviewing || isLoadingPrompt}
+            disabled={!input.trim() || isStreaming || isReviewing || isQAReviewing}
             className="send-btn"
           >
-            {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : isQAReviewing ? 'QA Reviewing...' : chatStarted ? 'Send' : 'Start Design'}
+            {isStreaming ? 'Generating...' : isReviewing ? 'Reviewing...' : isQAReviewing ? 'QA Reviewing...' : 'Send'}
           </button>
         </form>
-        
-        {!chatStarted && (
-          <div className="quick-prompts">
-            <span className="quick-prompts-label">Try:</span>
-            <button 
-              className="quick-prompt-btn"
-              onClick={() => handleQuickPrompt("A chair with a slatted back")}
-              disabled={isLoadingPrompt}
-            >
-              A chair with a slatted back
-            </button>
-            <button 
-              className="quick-prompt-btn"
-              onClick={() => handleQuickPrompt("A birdhouse")}
-              disabled={isLoadingPrompt}
-            >
-              A birdhouse
-            </button>
-            <button 
-              className="quick-prompt-btn"
-              onClick={() => handleQuickPrompt("An open bookshelf with four shelves")}
-              disabled={isLoadingPrompt}
-            >
-              An open bookshelf with four shelves
-            </button>
-            <button 
-              className="quick-prompt-btn"
-              onClick={() => handleQuickPrompt("The letters ETH")}
-              disabled={isLoadingPrompt}
-            >
-              The letters ETH
-            </button>
-            <button 
-              className="quick-prompt-btn"
-              onClick={() => handleQuickPrompt("The letter T")}
-              disabled={isLoadingPrompt}
-            >
-              The letter T
-            </button>
-          </div>
+        </>
         )}
       </div>
       
