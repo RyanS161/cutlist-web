@@ -1,120 +1,85 @@
-# Gemini Chat Web App
+# Cutlist Web Application
 
-A React + FastAPI chat application that provides a web interface for Google Gemini AI. Features real-time streaming responses via Server-Sent Events (SSE).
+Cutlist Web is a modern application designed to streamline woodworking and design projects by leveraging the power of Google Gemini AI. This app provides a real-time chat interface where users can interact with an AI assistant to generate, refine, and manage project designs. With its intuitive React-based frontend and a robust FastAPI backend, Cutlist Web ensures a seamless user experience for hobbyists and professionals alike.
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│              Firebase Hosting                    │
-│  ┌─────────────────────────────────────────┐    │
-│  │      React Frontend (Vite + TS)         │    │
-│  └─────────────────────────────────────────┘    │
-│                    │                             │
-│                    │ /api/* (proxy/rewrite)      │
-│                    ▼                             │
-│  ┌─────────────────────────────────────────┐    │
-│  │   Cloud Run (FastAPI + Gemini API)      │    │
-│  └─────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────┘
-```
+Whether you're brainstorming ideas, creating detailed cut lists, or exploring 3D visualizations, Cutlist Web empowers you with AI-driven insights and tools to bring your projects to life. The app is built with scalability and customization in mind, making it suitable for both personal and collaborative use.
 
 ## Features
 
-- 💬 Real-time chat interface with streaming responses
-- 🚀 FastAPI backend with async Gemini API integration
-- 📝 Configurable system prompt
-- 🔄 Conversation history maintained per session
-- 🎨 Dark theme UI
+- 🌟 Real-time chat interface with streaming responses
+- 🚀 FastAPI backend with Google Gemini API integration
+- 🛠️ Configurable AI system prompt
+- 🔄 Session-based conversation history
+- 🎨 Dark theme UI for better user experience
 
 ## Prerequisites
 
+Ensure the following tools are installed:
+
 - Node.js 18+
 - Python 3.11+
-- Google Cloud account (for deployment)
-- Firebase CLI (`npm install -g firebase-tools`)
 - Google Cloud CLI (`gcloud`)
+- Firebase CLI (`npm install -g firebase-tools`)
+- `uv` Python package (required for running backend scripts)
 
 ## Local Development
 
-### 1. Clone and Setup
+### 1. Clone the Repository
 
 ```bash
-cd cutlist-web-test
-
-# Setup backend
-cd backend
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# Create .env file
-cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY
+git clone https://github.com/RyanS161/cutlist-web.git
+cd cutlist-web
 ```
 
-### 2. Get Gemini API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Create a new API key
-3. Add it to `backend/.env`:
-   ```
-   GEMINI_API_KEY=your-api-key-here
-   ```
-
-### 3. Install Frontend Dependencies
+### 2. Backend Setup
 
 ```bash
-cd frontend
+cd backend
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+pip install -r requirements.txt
+cp .env.example .env
+# Add your GEMINI_API_KEY to the .env file
+```
+
+### 3. Frontend Setup
+
+```bash
+cd ../frontend
 npm install
 ```
 
 ### 4. Run Development Servers
 
-**Option A: Using dev script (recommended)**
+**Option A: Using the provided script**
+
 ```bash
 chmod +x dev.sh
 ./dev.sh
 ```
 
-**Option B: Run separately**
+**Option B: Run manually**
 
-Terminal 1 (Backend):
-```bash
-cd backend
-source venv/bin/activate
-uvicorn app.main:app --reload --port 8080
-```
+- **Backend**:
+  ```bash
+  cd backend
+  source venv/bin/activate
+  uvicorn app.main:app --reload --port 8080
+  ```
+- **Frontend**:
+  ```bash
+  cd frontend
+  npm run dev
+  ```
 
-Terminal 2 (Frontend):
-```bash
-cd frontend
-npm run dev
-```
+### 5. Access the Application
 
-### 5. Open the App
-
-- Frontend: http://localhost:5173
-- Backend API docs: http://localhost:8080/docs
-
-## Configuration
-
-### System Prompt
-
-Edit `backend/config/system_prompt.txt` to customize the AI's behavior and personality.
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GEMINI_API_KEY` | Google Gemini API key | Required |
-| `GEMINI_MODEL` | Gemini model to use | `gemini-2.5-flash` |
-| `HOST` | Backend host | `0.0.0.0` |
-| `PORT` | Backend port | `8080` |
+- Frontend: [http://localhost:5173](http://localhost:5173)
+- Backend API Docs: [http://localhost:8080/docs](http://localhost:8080/docs)
 
 ## Deployment
 
-### 1. Setup Firebase Project
+### 1. Firebase Hosting Setup
 
 ```bash
 firebase login
@@ -124,7 +89,7 @@ firebase use your-project-id
 
 Update `.firebaserc` with your project ID.
 
-### 2. Deploy Backend to Cloud Run
+### 2. Deploy Backend to Google Cloud Run
 
 ```bash
 cd backend
@@ -132,10 +97,10 @@ cd backend
 # Enable required APIs
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com
 
-# Set your Gemini API key as a secret (recommended)
+# Set your Gemini API key as a secret
 gcloud secrets create gemini-api-key --data-file=- <<< "your-api-key"
 
-# Deploy
+# Deploy the backend
 gcloud run deploy gemini-chat-api \
   --source . \
   --region us-central1 \
@@ -146,18 +111,16 @@ gcloud run deploy gemini-chat-api \
 ### 3. Deploy Frontend to Firebase Hosting
 
 ```bash
-# Build frontend
 cd frontend
 npm run build
-
-# Deploy
 cd ..
 firebase deploy --only hosting
 ```
 
-### 4. One-Command Deploy
+### 4. One-Command Deployment
 
 After initial setup:
+
 ```bash
 npm run deploy
 ```
@@ -165,74 +128,34 @@ npm run deploy
 ## Project Structure
 
 ```
-cutlist-web-test/
+cutlist-web/
 ├── frontend/                    # React frontend
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── ChatWindow.tsx   # Main chat UI
-│   │   │   └── ChatWindow.css
-│   │   ├── hooks/
-│   │   │   └── useChat.ts       # Chat state management
-│   │   ├── services/
-│   │   │   └── api.ts           # Backend API client
-│   │   ├── App.tsx
-│   │   └── index.css
+│   │   ├── components/         # UI components
+│   │   ├── hooks/              # Custom React hooks
+│   │   ├── services/           # API client
+│   │   ├── App.tsx             # Main app entry
+│   │   └── index.css           # Global styles
 │   ├── package.json
-│   └── vite.config.ts           # Vite config with API proxy
+│   └── vite.config.ts          # Vite configuration
 │
 ├── backend/                     # FastAPI backend
 │   ├── app/
-│   │   ├── main.py              # FastAPI app & routes
-│   │   ├── config.py            # Configuration management
-│   │   └── services/
-│   │       └── gemini_service.py # Gemini API integration
+│   │   ├── main.py             # FastAPI app
+│   │   ├── config.py           # Configuration management
+│   │   └── services/           # API integrations
 │   ├── config/
-│   │   └── system_prompt.txt    # AI system prompt
+│   │   └── system_prompt.txt   # AI system prompt
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── .env.example
 │
 ├── firebase.json                # Firebase Hosting config
-├── .firebaserc                  # Firebase project config
-├── dev.sh                       # Local dev script
-├── package.json                 # Root package.json with scripts
+├── dev.sh                       # Development script
+├── package.json                 # Root scripts
 └── README.md
 ```
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check |
-| POST | `/api/chat/stream` | Stream chat response (SSE) |
-
-### Chat Request Body
-
-```json
-{
-  "message": "Hello, how are you?",
-  "history": [
-    {"role": "user", "content": "Previous message"},
-    {"role": "model", "content": "Previous response"}
-  ]
-}
-```
-
-## Troubleshooting
-
-### CORS Errors
-The backend is configured to allow requests from `localhost:5173` and `localhost:3000`. For production, update the CORS settings in `backend/app/main.py`.
-
-### Streaming Not Working
-1. Check browser console for errors
-2. Verify the Vite proxy is configured correctly
-3. Test the backend directly: `curl -X POST http://localhost:8080/api/chat/stream -H "Content-Type: application/json" -d '{"message": "hi"}'`
-
-### API Key Issues
-1. Verify your API key at [Google AI Studio](https://aistudio.google.com)
-2. Check `backend/.env` file exists and has the correct key
-3. Restart the backend server after changing `.env`
-
 ## License
 
-MIT
+This project is licensed under the MIT License.
