@@ -1,23 +1,22 @@
 [project]
 name = "cutlist-backend"
 version = "0.1.0"
-description = "FastAPI backend for Gemini-powered woodworking designer"
+description = "ADK-based agentic backend for CadQuery woodworking carpenter"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi[standard]>=0.115.0",
-    "google-genai>=1.0.0",
-    "sse-starlette>=2.0.0",
-    "uvicorn[standard]>=0.30.0",
+    "cadquery>=2.7.0",
+    "google-adk>=1.0.0",
     "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
-    "cadquery>=2.6.1",
-    "pyvista>=0.44.0",
-    "pillow>=12.0.0",
-    "slowapi>=0.1.9",
+    "pyvista>=0.47.0",
 ]
 
 [project.optional-dependencies]
+# Install with: uv pip install -e ".[extensions]"
+# Enables OpenAI, Anthropic-direct, Groq, and 100+ other models via LiteLLM
+extensions = [
+    "litellm>=1.75.5",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

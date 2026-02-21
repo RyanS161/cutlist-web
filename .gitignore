@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 venv/
+**/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -41,3 +42,5 @@ htmlcov/
 # Other outputs
 backend/stl_files/
 backend/model_images/
+
+_output/
