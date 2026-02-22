@@ -161,13 +161,13 @@ def sandbox_code_execution(code: str, cached_modules: dict) -> ExecuteCodeRespon
     except SyntaxError as e:
         return ExecuteCodeResponse(
             success=False,
-            output=stdout_capture.getvalue(),
+            stdout=stdout_capture.getvalue(),
             msg=f"SyntaxError: {e.msg} (line {e.lineno})"
         )
     except Exception:
         error_msg = traceback.format_exc()
         return ExecuteCodeResponse(
             success=False,
-            output=stdout_capture.getvalue(),
+            stdout=stdout_capture.getvalue(),
             msg=f"Exception during code execution: {error_msg}"
         )

@@ -12,11 +12,12 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import time
 import math
 from pathlib import Path
-import logging
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from google.adk.runners import Runner
@@ -31,14 +32,13 @@ from code_utils import extract_code, validate_code_safety, sandbox_code_executio
 from output_utils import save_output_files
 from test_suite import run_test_suite
 
-
+from logger import make_logger_child
 
 # Load .env (GOOGLE_API_KEY, etc.)
 load_dotenv()
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("cutlist")
+logger = make_logger_child("main")
 
 CACHED_MODULES = {
     "cq": cadquery,
@@ -52,12 +52,13 @@ if not OUTPUT_PATH:
     OUTPUT_PATH = Path.cwd()
 
 CODE_ERROR_RETRY_LIMIT = 2
+MAX_QA_ITERATIONS = 3
 
-current_time = int(time.time())
+SESSION_ID = int(time.time())
 APP_NAME = "cutlist_code"
 USER_ID = "user_id"
-CARPENTER_SESSION = f"carpenter_session_{current_time}"
-QA_SESSION = f"qa_session_{current_time}"
+CARPENTER_SESSION = f"carpenter_session_{SESSION_ID}"
+QA_SESSION = f"qa_session_{SESSION_ID}"
 
 
 async def setup_runner(session_service, session_id, agent):
@@ -73,22 +74,17 @@ async def setup_runner(session_service, session_id, agent):
     )
 
 
-async def call_agent(runner: Runner, session_id: str, message: str) -> str:
+async def call_agent_with_content(runner: Runner, session_id: str, content) -> str:
     """Send a message to an agent and collect the full text response.
 
     Args:
         runner: The ADK Runner bound to a specific agent.
         session_id: The session ID to use for this conversation.
-        message: The user message to send.
+        content: The Content object to send.
 
     Returns:
-        The agent's final text response.
+        The agent's final text response (all text parts concatenated).
     """
-    content = types.Content(
-        role="user",
-        parts=[types.Part(text=message)],
-    )
-
     final_response = ""
     async for event in runner.run_async(
         user_id=USER_ID,
@@ -97,11 +93,60 @@ async def call_agent(runner: Runner, session_id: str, message: str) -> str:
     ):
         if event.is_final_response():
             if event.content and event.content.parts:
-                final_response = event.content.parts[0].text
+                # Concatenate all text parts in the response
+                text_parts = []
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        text_parts.append(part.text)
+                final_response = "\n".join(text_parts)
     return final_response
 
+async def call_agent(runner: Runner, session_id: str, message: str) -> str:
+    """Helper to send a text message and get a text response."""
+    content = types.Content(
+        role="user",
+        parts=[types.Part(text=message)],
+    )
+    return await call_agent_with_content(runner, session_id, content)
 
-async def carpenter_result_with_retries(prompt: str, carpenter_runner: Runner, retries: int) -> cadquery.Workplane | None:
+async def dump_agent_context(session_service, session_id):
+        ## Dump context here for debugging
+    session = await session_service.get_session(
+        app_name=APP_NAME, user_id=USER_ID, session_id=session_id
+    )
+    if session and session.events:
+        debug_path = OUTPUT_PATH / f"{SESSION_ID}" / f"{session_id}_context.json"
+        debug_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        debug_data = []
+        for event in session.events:
+            event_data = {
+                "author": event.author if hasattr(event, 'author') else None,
+                "timestamp": str(event.timestamp) if hasattr(event, 'timestamp') else None,
+            }
+            if hasattr(event, 'content') and event.content:
+                parts_data = []
+                for part in event.content.parts:
+                    part_info = {}
+                    if hasattr(part, 'text') and part.text:
+                        part_info['text'] = part.text
+                    if hasattr(part, 'function_call') and part.function_call:
+                        part_info['function_call'] = str(part.function_call)
+                    if hasattr(part, 'function_response') and part.function_response:
+                        part_info['function_response'] = str(part.function_response)
+                    parts_data.append(part_info)
+                event_data['parts'] = parts_data
+            debug_data.append(event_data)
+        
+        with open(debug_path, 'w') as f:
+            json.dump(debug_data, f, indent=2)
+        logger.info(f"Dumped session context to {debug_path}")
+
+
+async def generate_carpenter_result_with_retries(prompt: str,
+                                                 carpenter_runner: Runner,
+                                                 iteration: Optional[int] = None,
+                                                 retries: int = CODE_ERROR_RETRY_LIMIT) -> cadquery.Workplane | None:
     cad_query_obj = None
     carpenter_response = None
     for i in range(retries):
@@ -141,64 +186,113 @@ async def carpenter_result_with_retries(prompt: str, carpenter_runner: Runner, r
     
     if not cad_query_obj:
         logger.error(f"Failed to get a valid design after {retries} attempts.")
+        return None, carpenter_response
+    else:
+        test_result = run_test_suite(cad_query_obj)
+        save_output_files(OUTPUT_PATH,
+                        SESSION_ID,
+                        iteration=iteration,
+                        cad_query_obj=cad_query_obj,
+                        code=extracted_code,
+                        test_result_obj=test_result)
 
     return cad_query_obj, extracted_code
 
-async def control_method(user_prompt = None):
+
+async def QA_agent_response(qa_runner: Runner, qa_session_id: str, iteration: int, user_prompt: str) -> str:
+    """Send design artifacts to the QA agent for review.
+    
+    Loads the views.png and test_results.json from the iteration folder
+    and sends them along with the user's original prompt to the QA agent.
+    """
+    # Build path to iteration folder
+    iteration_path = OUTPUT_PATH / f"{SESSION_ID}" / f"iteration_{iteration}"
+    views_path = iteration_path / "views.png"
+    test_results_path = iteration_path / "test_results.json"
+    
+    # Load the views image
+    parts = []
+    
+    if views_path.exists():
+        with open(views_path, "rb") as f:
+            image_data = f.read()
+        parts.append(types.Part.from_bytes(data=image_data, mime_type="image/png"))
+        logger.info(f"Loaded views image from {views_path}")
+    else:
+        logger.warning(f"Views image not found at {views_path}")
+    
+    # Load test results
+    test_results_text = ""
+    if test_results_path.exists():
+        with open(test_results_path, "r") as f:
+            test_results = json.load(f)
+        test_results_text = f"Test Results:\n{json.dumps(test_results, indent=2)}"
+        logger.info(f"Loaded test results from {test_results_path}")
+    else:
+        logger.warning(f"Test results not found at {test_results_path}")
+        test_results_text = "Test Results: Not available"
+    
+    # Build the text prompt
+    qa_text = (
+        f"Iteration {iteration} Design Review\n"
+        f"User's original request: {user_prompt}\n\n"
+        f"{test_results_text}\n\n"
+        f"Please review the design and image and provide your feedback."
+    )
+    parts.append(types.Part.from_text(text=qa_text))
+    
+    # Create content with image and text
+    content = types.Content(role="user", parts=parts)
+    
+    # Send to QA agent
+    final_response = await call_agent_with_content(qa_runner, qa_session_id, content)
+    return final_response
+
+
+
+async def carpenter_only(user_prompt):
     """Run the Carpenter → compute → QA → Carpenter orchestration loop."""
+
+    session_service = InMemorySessionService()
+
+    carpenter_runner = await setup_runner(session_service, CARPENTER_SESSION, carpenter_agent)
+
+    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner)
+
+    await dump_agent_context(session_service, CARPENTER_SESSION)
+
+
+
+async def carpenter_qa_loop(user_prompt = None, max_iterations=MAX_QA_ITERATIONS):
 
     session_service = InMemorySessionService()
 
     carpenter_runner = await setup_runner(session_service, CARPENTER_SESSION, carpenter_agent)
     qa_runner = await setup_runner(session_service, QA_SESSION, qa_agent)
 
-    # --- Step 2: Send to Carpenter agent ---
-    cad_query_obj, result_code = await carpenter_result_with_retries(user_prompt, carpenter_runner, CODE_ERROR_RETRY_LIMIT)
+    # --- Initital carpenter response
+    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner, iteration=0)
 
-    if not cad_query_obj:
-        return
-    
-    # --- Step 3: Process Carpenter output ---
 
-    save_output_files(cad_query_obj, result_code, CARPENTER_SESSION, OUTPUT_PATH)
+    for iteration in range(max_iterations):
+        logger.info(f"\n\n{'#' * 10} QA Iteration {iteration} {'#' * 10}\n\n")
 
-    # --- Step 4: Get test suit results --- 
-    test_result = run_test_suite(cad_query_obj)
+        qa_response = await QA_agent_response(qa_runner, QA_SESSION, iteration, user_prompt)
 
-    print("\n" + "=" * 60)
-    print("  Test Suite Results")
-    print("=" * 60)
-    for test in test_result.tests:
-        print(f"{str(test.status)}: {test.name} - {test.message}")
-    print("\n" + "=" * 60)
+        if "QA_PASSED" in qa_response:
+            logger.info("QA agent approved the design. Ending loop.")
+            break
 
-    return
+        refinement_prompt = (
+            f"The QA agent has reviewed your design and provided the following feedback:\n\n"
+            f"{qa_response}\n\n"
+            f"Please revise your design to address the QA's feedback and provide updated CadQuery code"
+        )
 
-    # --- Step 4: Send computed result to QA agent ---
-    # print("\n--- QA Agent ---")
-    # qa_message = (
-    #     f"Please review this design.\n\n"
-    #     f"User's original request: {user_prompt}\n\n"
-    #     f"{computed_result}"
-    # )
-    # qa_response = await call_agent(qa_runner, QA_SESSION, qa_message)
-    # print(f"\nQA:\n{qa_response}")
+        cad_query_obj, result_code = await generate_carpenter_result_with_retries(refinement_prompt, carpenter_runner, iteration=iteration + 1)
 
-    # # --- Step 5: Send QA feedback back to Carpenter ---
-    # print("\n--- Carpenter Agent (revision) ---")
-    # revision_message = (
-    #     f"The QA reviewer provided the following feedback on your design. "
-    #     f"Please address their concerns and provide an updated design.\n\n"
-    #     f"QA Feedback:\n{qa_response}"
-    # )
-    # carpenter_revision = await call_agent(
-    #     carpenter_runner, CARPENTER_SESSION, revision_message
-    # )
-    # print(f"\nCarpenter (revised):\n{carpenter_revision}")
-
-    # print("\n" + "=" * 60)
-    # print("  Workflow complete!")
-    # print("=" * 60)
+    await dump_agent_context(session_service, CARPENTER_SESSION)
+    await dump_agent_context(session_service, QA_SESSION)
 
 
 if __name__ == "__main__":
@@ -209,8 +303,16 @@ if __name__ == "__main__":
         default=None,
         help="Design prompt (if not provided, prompts interactively)"
     )
+    parser.add_argument(
+        "-m", "--method",
+        type=str,
+        default="carpenter_only",
+        choices=["carpenter_only", "carpenter_qa_loop"],
+        help="Which workflow method to run"
+    )
     args = parser.parse_args()
     user_prompt = args.prompt
+    method = args.method
 
     logger.info("=" * 20 + "  Cutlist Carpenter — Agentic Workflow Demo" + "=" * 20)
     # Get prompt from args or interactive input
@@ -218,4 +320,9 @@ if __name__ == "__main__":
         user_prompt = input("\nDescribe your woodworking project:\n> ")
 
     # Run the main loop
-    asyncio.run(control_method(user_prompt=user_prompt))
+    if method == "carpenter_only":
+        asyncio.run(carpenter_only(user_prompt))
+    elif method == "carpenter_qa_loop":
+        asyncio.run(carpenter_qa_loop(user_prompt))
+    else:
+        logger.error(f"Unknown method: {method}")

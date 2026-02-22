@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "cadquery>=2.7.0",
+    "colorlog>=6.10.1",
     "google-adk>=1.0.0",
     "ocp>=0.1.4",
     "python-dotenv>=1.0.0",

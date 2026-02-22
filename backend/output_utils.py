@@ -1,49 +1,75 @@
 from typing import Optional
 from pathlib import Path
 import os
+import json
 
 import pyvista as pv
 from PIL import Image
 import cadquery as cq
 
-import logging
-logger = logging.getLogger("cutlist")
+from logger import make_logger_child
+logger = make_logger_child("output")
 
-def save_output_files(result, code: str, base_id: str, output_path: Path):
+def save_output_files(output_path: Path, 
+                      base_id: str,
+                      iteration: Optional[int] = None,
+                      cad_query_obj = None,
+                      code: str = None,
+                      test_result_obj = None):
     """Save output files for the given result and generated code.
     
     Tries to export STL, render views, create assembly GIF, and save code.
     Each type of output is optional and failures are logged but do not raise exceptions.
     """
 
-    os.makedirs(output_path / base_id, exist_ok=True)
-
-    views_success = _try_render_views(result, base_id, output_path)
-    if views_success:
-        logger.info(f"View rendering successful for {base_id}")
+    if iteration is None:
+        iteration_path = output_path / str(base_id) / "final"
     else:
-        logger.error(f"View rendering not applicable for {base_id}")
+        iteration_path = output_path / str(base_id) / f"iteration_{iteration}"
+
+    os.makedirs(iteration_path, exist_ok=True)
+
+    if cad_query_obj:
+        views_success = _try_render_views(cad_query_obj, iteration_path)
+        if views_success:
+            logger.info(f"View rendering successful for {base_id}")
+        else:
+            logger.error(f"View rendering not applicable for {base_id}")
+        
+        gif_success = _try_render_assembly_gif(cad_query_obj, iteration_path)
+        if gif_success:
+            logger.info(f"Assembly GIF rendering successful for {base_id}")
+        else:
+            logger.error(f"Assembly GIF rendering not applicable for {base_id}")
+        
+        stl_success = _try_export_stl(cad_query_obj, iteration_path)
+        if stl_success:
+            logger.info(f"STL export successful for {base_id}")
+        else:
+            logger.error(f"STL export not applicable for {base_id}")
+
+        parts_json_success = _try_export_parts_json(cad_query_obj, iteration_path)
+        if parts_json_success:
+            logger.info(f"Parts JSON export successful for {base_id}")
+        else:
+            logger.error(f"Parts JSON export not applicable for {base_id}")
     
-    gif_success = _try_render_assembly_gif(result, base_id, output_path)
-    if gif_success:
-        logger.info(f"Assembly GIF rendering successful for {base_id}")
-    else:
-        logger.error(f"Assembly GIF rendering not applicable for {base_id}")
-    
-    code_success = _try_export_code(code, base_id, output_path)
-    if code_success:
-        logger.info(f"Code export successful for {base_id}")
-    else:
-        logger.error(f"Code export failed for {base_id}")
+    if code:
+        code_success = _try_export_code(code, iteration_path)
+        if code_success:
+            logger.info(f"Code export successful for {base_id}")
+        else:
+            logger.error(f"Code export failed for {base_id}")
 
-    stl_success = _try_export_stl(result, base_id, output_path)
-    if stl_success:
-        logger.info(f"STL export successful for {base_id}")
-    else:
-        logger.error(f"STL export not applicable for {base_id}")
+    if test_result_obj:
+        test_result_success = _try_export_test_suite_results(test_result_obj, iteration_path)
+        if test_result_success:
+            logger.info(f"Test result export successful for {base_id}")
+        else:
+            logger.error(f"Test result export failed for {base_id}")
 
 
-def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
+def _try_render_assembly_gif(result, output_path: Path) -> bool:
     """Render an animated GIF showing parts being assembled one by one.
     
     Uses PyVista for headless STL-based rendering.
@@ -90,7 +116,7 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
                 continue
             
             # Export to temporary STL
-            tmp_path = output_path / base_id / f"{base_id}_{part_name}_temp.stl"
+            tmp_path = output_path / f"{part_name}_temp.stl"
             part_stl_files.append(tmp_path)
             
             try:
@@ -158,8 +184,8 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
             plotter.camera.zoom(1.0)
             
             # Render this frame
-            temp_filename = f"{base_id}_frame_{i:03d}.png"
-            temp_path = output_path / base_id / temp_filename
+            temp_filename = f"frame_{i:04d}.png"
+            temp_path = output_path / temp_filename
             temp_files.append(temp_path)
             
             plotter.screenshot(str(temp_path))
@@ -179,8 +205,8 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
             img.close()
         
         # Save as animated GIF
-        gif_filename = f"{base_id}_assembly.gif"
-        gif_path = output_path / base_id / gif_filename
+        gif_filename = f"assembly.gif"
+        gif_path = output_path / gif_filename
         
         if frames:
             frames[0].save(
@@ -213,7 +239,7 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
     
 
 
-def _try_export_stl(result, base_id: str, output_path: Path) -> bool:
+def _try_export_stl(result, output_path: Path) -> bool:
     """Try to export a CadQuery object to STL file.
     
     Returns the URL to access the STL file, or None if not a CadQuery object.
@@ -243,13 +269,13 @@ def _try_export_stl(result, base_id: str, output_path: Path) -> bool:
         return False
     
     try:
-        filename = f"{base_id}.stl"
-        file_path = output_path / base_id / filename
+        filename = f"assembly.stl"
+        file_path = output_path / filename
         
         # Export to STL
         cq.exporters.export(exportable, str(file_path))
         
-        logger.debug(f"Exported STL to {file_path}")
+        logger.info(f"Exported STL to {file_path}")
         return True
     except Exception as e:
         logger.error(f"Failed to export STL: {e}")
@@ -258,20 +284,20 @@ def _try_export_stl(result, base_id: str, output_path: Path) -> bool:
 
 
 
-def _try_render_views(result, base_id: str, output_path: Path) -> bool:
+def _try_render_views(result, output_path: Path) -> bool:
     """Render a combined 2x2 grid PNG image of a CadQuery object from 4 different isometric views.
     
     Uses PyVista for headless STL-based rendering.
     Returns the URL to access the combined PNG file, or None if not a CadQuery object.
     """
     
-    stl_success = _try_export_stl(result, base_id, output_path)
+    stl_success = _try_export_stl(result, output_path)
     if not stl_success:
         return False
     
     try:
         # Export to temporary STL file
-        temp_stl = output_path / base_id / f"{base_id}.stl"
+        temp_stl = output_path / "assembly.stl"
         
         # Load STL with PyVista
         mesh = pv.read(str(temp_stl))
@@ -300,8 +326,8 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
         
         # Render each view
         for view_name, azimuth, elevation in views:
-            temp_filename = f"{base_id}_{view_name.lower().replace('-', '_')}_temp.png"
-            temp_path = output_path / base_id / temp_filename
+            temp_filename = f"{view_name.lower().replace('-', '_')}_temp.png"
+            temp_path = output_path / temp_filename
             temp_files.append((view_name, temp_path))
             
             # Create plotter with clean settings
@@ -336,8 +362,8 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
             temp_path.unlink()
         
         # Save combined image
-        combined_filename = f"{base_id}_views.png"
-        combined_path = output_path / base_id / combined_filename
+        combined_filename = f"views.png"
+        combined_path = output_path / combined_filename
         combined.save(combined_path, 'PNG')
         combined.close()
         
@@ -350,11 +376,11 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
         traceback.print_exc()
         return False
 
-def _try_export_code(code, base_id: str, output_path: Path) -> bool:
+def _try_export_code(code, output_path: Path) -> bool:
     """Try to save the generated code to a .py file for debugging purposes."""
     try:
-        filename = f"{base_id}.py"
-        file_path = output_path / base_id / filename
+        filename = f"code.py"
+        file_path = output_path / filename
         with open(file_path, 'w') as f:
             f.write(code)
         logger.debug(f"Saved generated code to {file_path}")
@@ -362,3 +388,113 @@ def _try_export_code(code, base_id: str, output_path: Path) -> bool:
     except Exception as e:
         logger.error(f"Failed to save generated code: {e}")
         return False
+    
+def _try_export_parts_json(result, output_path: Path) -> bool:
+    """Try to export a JSON file listing the parts in an Assembly.
+    
+    Exports JSON with part names, dimensions (L, W, H), positions (x, y, z),
+    and rotations (quaternion: i, j, k, c) in assembly order.
+    """
+    
+    # Only works for Assembly objects with children
+    if not hasattr(result, 'children') or not hasattr(result, 'objects'):
+        return False
+    
+    # Get the objects dict (name -> Assembly node)
+    objects_dict = getattr(result, 'objects', None)
+    if not objects_dict or not isinstance(objects_dict, dict):
+        return False
+    
+    parts_list = []
+    
+    for part_name in objects_dict.keys():
+        part_asm = objects_dict[part_name]
+        part_obj = getattr(part_asm, 'obj', None)
+        part_loc = getattr(part_asm, 'loc', None)
+        
+        if part_obj is None:
+            continue
+        
+        # Get the underlying shape
+        if hasattr(part_obj, 'val'):
+            shape = part_obj.val()
+        else:
+            shape = part_obj
+        
+        if shape is None:
+            continue
+        
+        # Get bounding box dimensions (L, W, H)
+        try:
+            if hasattr(shape, 'BoundingBox'):
+                bb = shape.BoundingBox()
+            elif hasattr(shape, 'val') and hasattr(shape.val(), 'BoundingBox'):
+                bb = shape.val().BoundingBox()
+            else:
+                bb = None
+            
+            if bb is not None:
+                dims = [
+                    round(bb.xlen, 4),
+                    round(bb.ylen, 4),
+                    round(bb.zlen, 4)
+                ]
+            else:
+                dims = [0, 0, 0]
+        except Exception as e:
+            logger.warning(f"Failed to get bounding box for {part_name}: {e}")
+            dims = [0, 0, 0]
+        
+        # Get position and rotation from location
+        pos = [0.0, 0.0, 0.0]
+        rot = [0.0, 0.0, 0.0, 1.0]  # Quaternion (i, j, k, w) - identity
+        
+        if part_loc is not None:
+            try:
+                # Extract translation (position)
+                T = part_loc.wrapped.Transformation()
+                translation = T.TranslationPart()
+                pos = [
+                    round(translation.X(), 4),
+                    round(translation.Y(), 4),
+                    round(translation.Z(), 4)
+                ]
+                
+                # Extract rotation as quaternion
+                from OCP.gp import gp_Quaternion
+                quat = T.GetRotation()
+                rot = [
+                    round(quat.X(), 6),  # i
+                    round(quat.Y(), 6),  # j
+                    round(quat.Z(), 6),  # k
+                    round(quat.W(), 6)   # c (scalar/real part)
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to extract transform for {part_name}: {e}")
+        
+        parts_list.append({
+            'name': part_name,
+            'dims': dims,
+            'pos': pos,
+            'rot': rot
+        })
+    
+    try:
+        output_data = {'parts': parts_list}
+        filename = f"parts.json"
+        file_path = output_path / filename
+        
+        with open(file_path, 'w') as f:
+            json.dump(output_data, f, indent=2)
+        
+        logger.debug(f"Exported parts JSON to {file_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to export parts JSON: {e}")
+        return False
+    
+def _try_export_test_suite_results(test_result_obj, output_path):
+    with open(output_path / f"test_results.json", 'w') as f:
+        json.dump(test_result_obj.to_dict(), f, indent=2)
+
+    return True

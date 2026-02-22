@@ -1,4 +1,3 @@
-import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -9,8 +8,9 @@ from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 
 
 from part_library import PART_LIBRARY
+from logger import make_logger_child
 
-logger = logging.getLogger('cutlist')
+logger = make_logger_child("main")
 
 
 class TestStatus(str, Enum):
@@ -186,7 +186,7 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
     
     try:
         # Log the type for debugging
-        logger.info(f"Extracting solids from type: {type(result).__name__}")
+        logger.debug(f"Extracting solids from type: {type(result).__name__}")
         logger.debug(f"Result attributes: {[a for a in dir(result) if not a.startswith('_')][:20]}")
         
         # Case 1: Assembly object - detect by checking for 'objects' attribute
@@ -195,7 +195,7 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
         if hasattr(result, 'objects') and hasattr(result, 'toCompound'):
             objects_attr = getattr(result, 'objects', None)
             
-            logger.info(f"Assembly detected - objects: {type(objects_attr)}")
+            logger.debug(f"Assembly detected - objects: {type(objects_attr)}")
             
             # objects can be a dict (name -> Assembly) or list
             objects_dict = {}
@@ -213,11 +213,11 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
                     logger.warning(f"Could not process objects: {e}")
             
             if objects_dict:
-                logger.info(f"Processing Assembly with {len(objects_dict)} objects")
+                logger.debug(f"Processing Assembly with {len(objects_dict)} objects")
                 
                 # Log what's in objects for debugging
                 for i, (obj_name, obj_asm) in enumerate(list(objects_dict.items())[:5]):  # Log first 5
-                    logger.info(f"  objects['{obj_name}']: type={type(obj_asm).__name__}")
+                    logger.debug(f"  objects['{obj_name}']: type={type(obj_asm).__name__}")
                 
                 def apply_location_to_solid(solid, loc):
                     """Apply a CadQuery Location transform to a solid."""
@@ -292,13 +292,13 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
                     else:
                         logger.debug(f"Object '{obj_name}' has no obj attribute")
                 
-                logger.info(f"Extracted {len(parts)} parts from Assembly.objects")
+                logger.debug(f"Extracted {len(parts)} parts from Assembly.objects")
                 for p in parts:
-                    logger.info(f"  Part: name='{p['name']}'")
+                    logger.debug(f"  Part: name='{p['name']}'")
             
             # Fallback: if we didn't find any solids via objects list, use toCompound()
             if not parts and hasattr(result, 'toCompound'):
-                logger.info("No solids found via objects, trying toCompound() fallback")
+                logger.warning("No solids found via objects, trying toCompound() fallback")
                 try:
                     compound = result.toCompound()
                     if hasattr(compound, 'Solids') and callable(compound.Solids):
@@ -312,7 +312,7 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
         elif hasattr(result, 'vals') and callable(result.vals):
             # Use .vals() to get ALL objects in the workplane, not just the last one
             vals = result.vals()
-            logger.info(f"Workplane contains {len(vals)} objects")
+            logger.debug(f"Workplane contains {len(vals)} objects")
             
             part_idx = 0
             for val in vals:
@@ -330,7 +330,7 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
                     part_idx += 1
                     parts.append({'solid': val, 'name': f'part_{part_idx}'})
                     
-            logger.info(f"Extracted {len(parts)} solids from Workplane")
+            logger.debug(f"Extracted {len(parts)} solids from Workplane")
             
         # Case 3: Assembly with toCompound (fallback)
         elif hasattr(result, 'toCompound') and callable(result.toCompound):
@@ -338,18 +338,18 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
             if hasattr(compound, 'Solids') and callable(compound.Solids):
                 solids = list(compound.Solids())
                 parts = [{'solid': s, 'name': f'part_{i+1}'} for i, s in enumerate(solids)]
-            logger.info(f"Extracted {len(parts)} solids from Assembly.toCompound()")
+            logger.debug(f"Extracted {len(parts)} solids from Assembly.toCompound()")
             
         # Case 4: Compound or shape with Solids method
         elif hasattr(result, 'Solids') and callable(result.Solids):
             solids = list(result.Solids())
             parts = [{'solid': s, 'name': f'part_{i+1}'} for i, s in enumerate(solids)]
-            logger.info(f"Extracted {len(parts)} solids from Compound")
+            logger.debug(f"Extracted {len(parts)} solids from Compound")
             
         # Case 5: Direct solid
         elif hasattr(result, 'BoundingBox'):
             parts.append({'solid': result, 'name': 'part_1'})
-            logger.info("Result appears to be a single solid")
+            logger.warning("Result appears to be a single solid")
             
         else:
             logger.warning(f"Unknown result type: {type(result)}, attributes: {dir(result)[:10]}...")
@@ -573,7 +573,7 @@ def test_no_intersections(result) -> TestResult:
                             'name2': name2,
                             'volume': round(volume, 2),
                         })
-                        logger.info(f"Found intersection between '{name1}' and '{name2}': volume={volume:.2f}mm³")
+                        logger.debug(f"Found intersection between '{name1}' and '{name2}': volume={volume:.2f}mm³")
                         
             except Exception as e:
                 logger.warning(f"Error checking intersection between '{name1}' and '{name2}': {e}")
