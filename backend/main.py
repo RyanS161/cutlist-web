@@ -21,14 +21,16 @@ from dotenv import load_dotenv
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+import cadquery
 
 # Import the individual agents (not the root coordinator)
 from cutlist_agent.sub_agents.carpenter_agent import carpenter_agent
 from cutlist_agent.sub_agents.qa_agent import qa_agent
 from code_utils import extract_code, validate_code_safety, sandbox_code_execution
-from output_utils import _try_render_views, _try_export_stl, _try_render_assembly_gif, _try_export_code, setup_output_directories
+from output_utils import save_output_files
+from test_suite import run_test_suite
 
-import cadquery as cq
+
 
 # Load .env (GOOGLE_API_KEY, etc.)
 load_dotenv()
@@ -38,20 +40,33 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cutlist")
 
 CACHED_MODULES = {
-    "cq": cq,
-    "cadquery": cq,
+    "cq": cadquery,
+    "cadquery": cadquery,
     "math": math,
 }
 
 OUTPUT_PATH = Path("/Users/ryanslocum/Documents/current_courses/semesterProject/cutlist-web/_output")
 
-CODE_ERROR_RETRY_LIMIT = 1
+CODE_ERROR_RETRY_LIMIT = 2
 
 current_time = int(time.time())
 APP_NAME = "cutlist_code"
 USER_ID = "user_id"
 CARPENTER_SESSION = f"carpenter_session_{current_time}"
 QA_SESSION = f"qa_session_{current_time}"
+
+
+async def setup_runner(session_service, session_id, agent):
+    """Set up separate sessions and runners for each agent."""
+    # Create separate sessions for each agent
+    await session_service.create_session(
+        app_name=APP_NAME, user_id=USER_ID, session_id=session_id
+    )
+    return Runner(
+        agent=agent,
+        app_name=APP_NAME,
+        session_service=session_service,
+    )
 
 
 async def call_agent(runner: Runner, session_id: str, message: str) -> str:
@@ -82,10 +97,10 @@ async def call_agent(runner: Runner, session_id: str, message: str) -> str:
     return final_response
 
 
-async def carpenter_result_with_retries(prompt: str, carpenter_runner: Runner) -> cq.Workplane | None:
+async def carpenter_result_with_retries(prompt: str, carpenter_runner: Runner, retries: int) -> cadquery.Workplane | None:
     cad_query_obj = None
     carpenter_response = None
-    for i in range(CODE_ERROR_RETRY_LIMIT):
+    for i in range(retries):
         logger.info(f"--- Carpenter Attempt {i+1} ---")
         logger.info(f"Prompt:\n{prompt}")
         carpenter_response = await call_agent(
@@ -116,59 +131,42 @@ async def carpenter_result_with_retries(prompt: str, carpenter_runner: Runner) -
             logger.error(f"Error: {result.msg}")
             prompt = f"The code you provided has issues:\n{result.msg}\nPlease fix the code and provide an updated version."
             continue
-
-        cad_query_obj = result.result
+        else:
+            cad_query_obj = result.result
+            break # If we got here, we have a valid design and can exit the retry loop
     
     if not cad_query_obj:
-        logger.error(f"Failed to get a valid design after {CODE_ERROR_RETRY_LIMIT} attempts.")
+        logger.error(f"Failed to get a valid design after {retries} attempts.")
 
     return cad_query_obj, extracted_code
 
-async def main(user_prompt = None):
+async def control_method(user_prompt = None):
     """Run the Carpenter → compute → QA → Carpenter orchestration loop."""
 
-    # Shared session service (in-memory for now)
     session_service = InMemorySessionService()
 
-    # Create separate sessions for each agent
-    await session_service.create_session(
-        app_name=APP_NAME, user_id=USER_ID, session_id=CARPENTER_SESSION
-    )
-    await session_service.create_session(
-        app_name=APP_NAME, user_id=USER_ID, session_id=QA_SESSION
-    )
-
-    # Create runners — each targets a specific agent
-    carpenter_runner = Runner(
-        agent=carpenter_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-    )
-    qa_runner = Runner(
-        agent=qa_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-    )
-    logger.info("=" * 20 + "  Cutlist Carpenter — Agentic Workflow Demo" + "=" * 20)
-    
-    
-    # Get prompt from args or interactive input
-    if not user_prompt:
-        user_prompt = input("\nDescribe your woodworking project:\n> ")
-
+    carpenter_runner = await setup_runner(session_service, CARPENTER_SESSION, carpenter_agent)
+    qa_runner = await setup_runner(session_service, QA_SESSION, qa_agent)
 
     # --- Step 2: Send to Carpenter agent ---
-    cad_query_obj, result_code = await carpenter_result_with_retries(user_prompt, carpenter_runner)
+    cad_query_obj, result_code = await carpenter_result_with_retries(user_prompt, carpenter_runner, CODE_ERROR_RETRY_LIMIT)
 
     if not cad_query_obj:
         return
     
     # --- Step 3: Process Carpenter output ---
 
-    logger.info(f"Rendered Views: {_try_render_views(cad_query_obj, CARPENTER_SESSION, OUTPUT_PATH)}")
-    logger.info(f"Exported STL: {_try_export_stl(cad_query_obj, CARPENTER_SESSION, OUTPUT_PATH)}")
-    logger.info(f"Rendered GIF: {_try_render_assembly_gif(cad_query_obj, CARPENTER_SESSION, OUTPUT_PATH)}")
-    logger.info(f"Exported Code: {_try_export_code(result_code, CARPENTER_SESSION, OUTPUT_PATH)}")
+    save_output_files(cad_query_obj, result_code, CARPENTER_SESSION, OUTPUT_PATH)
+
+    # --- Step 4: Get test suit results --- 
+    test_result = run_test_suite(cad_query_obj)
+
+    print("\n" + "=" * 60)
+    print("  Test Suite Results")
+    print("=" * 60)
+    for test in test_result.tests:
+        print(f"{str(test.status)}: {test.name} - {test.message}")
+    print("\n" + "=" * 60)
 
     return
 
@@ -210,8 +208,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     user_prompt = args.prompt
 
-    ## Output setup: create output directories if they don't exist
-    setup_output_directories(OUTPUT_PATH)
+    logger.info("=" * 20 + "  Cutlist Carpenter — Agentic Workflow Demo" + "=" * 20)
+    # Get prompt from args or interactive input
+    if not user_prompt:
+        user_prompt = input("\nDescribe your woodworking project:\n> ")
 
     # Run the main loop
-    asyncio.run(main(user_prompt=user_prompt))
+    asyncio.run(control_method(user_prompt=user_prompt))

@@ -55,4 +55,7 @@ result.add(part2, name="horizontal_beam", loc=cq.Location((50, 0, 200)))
 
 - The order in which you add parts to the assembly (`result.add(...)`) defines the assembly sequence.
 - Ensure that parts are added in a stable order (usually bottom-up). Each new part must be supported by the ground or previous parts.
+
+### Available Parts
+{part_table}
 """

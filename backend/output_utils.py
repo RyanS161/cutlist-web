@@ -9,15 +9,39 @@ import cadquery as cq
 import logging
 logger = logging.getLogger("cutlist")
 
+def save_output_files(result, code: str, base_id: str, output_path: Path):
+    """Save output files for the given result and generated code.
+    
+    Tries to export STL, render views, create assembly GIF, and save code.
+    Each type of output is optional and failures are logged but do not raise exceptions.
+    """
 
-CODE_MODE = "code"
-STL_MODE = "stls"
-VIEWS_MODE = "views"
-GIF_MODE = "gifs"
+    os.makedirs(output_path / base_id, exist_ok=True)
 
-def setup_output_directories(base_path: Path):
-    for mode in [CODE_MODE, STL_MODE, VIEWS_MODE, GIF_MODE]:
-        os.makedirs(base_path / mode, exist_ok=True)
+    views_success = _try_render_views(result, base_id, output_path)
+    if views_success:
+        logger.info(f"View rendering successful for {base_id}")
+    else:
+        logger.error(f"View rendering not applicable for {base_id}")
+    
+    gif_success = _try_render_assembly_gif(result, base_id, output_path)
+    if gif_success:
+        logger.info(f"Assembly GIF rendering successful for {base_id}")
+    else:
+        logger.error(f"Assembly GIF rendering not applicable for {base_id}")
+    
+    code_success = _try_export_code(code, base_id, output_path)
+    if code_success:
+        logger.info(f"Code export successful for {base_id}")
+    else:
+        logger.error(f"Code export failed for {base_id}")
+
+    stl_success = _try_export_stl(result, base_id, output_path)
+    if stl_success:
+        logger.info(f"STL export successful for {base_id}")
+    else:
+        logger.error(f"STL export not applicable for {base_id}")
+
 
 def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
     """Render an animated GIF showing parts being assembled one by one.
@@ -66,7 +90,7 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
                 continue
             
             # Export to temporary STL
-            tmp_path = output_path / STL_MODE / f"{base_id}_{part_name}_temp.stl"
+            tmp_path = output_path / base_id / f"{base_id}_{part_name}_temp.stl"
             part_stl_files.append(tmp_path)
             
             try:
@@ -135,7 +159,7 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
             
             # Render this frame
             temp_filename = f"{base_id}_frame_{i:03d}.png"
-            temp_path = output_path / VIEWS_MODE / temp_filename
+            temp_path = output_path / base_id / temp_filename
             temp_files.append(temp_path)
             
             plotter.screenshot(str(temp_path))
@@ -156,7 +180,7 @@ def _try_render_assembly_gif(result, base_id: str, output_path: Path) -> bool:
         
         # Save as animated GIF
         gif_filename = f"{base_id}_assembly.gif"
-        gif_path = output_path / GIF_MODE / gif_filename
+        gif_path = output_path / base_id / gif_filename
         
         if frames:
             frames[0].save(
@@ -220,7 +244,7 @@ def _try_export_stl(result, base_id: str, output_path: Path) -> bool:
     
     try:
         filename = f"{base_id}.stl"
-        file_path = output_path / STL_MODE / filename
+        file_path = output_path / base_id / filename
         
         # Export to STL
         cq.exporters.export(exportable, str(file_path))
@@ -247,7 +271,7 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
     
     try:
         # Export to temporary STL file
-        temp_stl = output_path / STL_MODE / f"{base_id}.stl"
+        temp_stl = output_path / base_id / f"{base_id}.stl"
         
         # Load STL with PyVista
         mesh = pv.read(str(temp_stl))
@@ -277,7 +301,7 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
         # Render each view
         for view_name, azimuth, elevation in views:
             temp_filename = f"{base_id}_{view_name.lower().replace('-', '_')}_temp.png"
-            temp_path = output_path / VIEWS_MODE / temp_filename
+            temp_path = output_path / base_id / temp_filename
             temp_files.append((view_name, temp_path))
             
             # Create plotter with clean settings
@@ -313,7 +337,7 @@ def _try_render_views(result, base_id: str, output_path: Path) -> bool:
         
         # Save combined image
         combined_filename = f"{base_id}_views.png"
-        combined_path = output_path / VIEWS_MODE / combined_filename
+        combined_path = output_path / base_id / combined_filename
         combined.save(combined_path, 'PNG')
         combined.close()
         
@@ -330,7 +354,7 @@ def _try_export_code(code, base_id: str, output_path: Path) -> bool:
     """Try to save the generated code to a .py file for debugging purposes."""
     try:
         filename = f"{base_id}.py"
-        file_path = output_path / CODE_MODE / filename
+        file_path = output_path / base_id / filename
         with open(file_path, 'w') as f:
             f.write(code)
         logger.debug(f"Saved generated code to {file_path}")

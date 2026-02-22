@@ -615,6 +615,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "cadquery" },
     { name = "google-adk" },
+    { name = "ocp" },
     { name = "python-dotenv" },
     { name = "pyvista" },
 ]
@@ -639,6 +640,7 @@ requires-dist = [
     { name = "cadquery", specifier = ">=2.7.0" },
     { name = "google-adk", specifier = ">=1.0.0" },
     { name = "litellm", marker = "extra == 'extensions'", specifier = ">=1.75.5" },
+    { name = "ocp", specifier = ">=0.1.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
@@ -2616,6 +2618,88 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/91/da/643aad274e29ccbdf42ecd94dafe524b81c87bcb56b83872d54827f10543/numpy-2.4.2-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e04ae107ac591763a47398bb45b568fc38f02dbc4aa44c063f67a131f99346cb", size = 15797142 },
     { url = "https://files.pythonhosted.org/packages/66/27/965b8525e9cb5dc16481b30a1b3c21e50c7ebf6e9dbd48d0c4d0d5089c7e/numpy-2.4.2-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:602f65afdef699cda27ec0b9224ae5dc43e328f4c24c689deaf77133dbee74d0", size = 16727979 },
     { url = "https://files.pythonhosted.org/packages/de/e5/b7d20451657664b07986c2f6e3be564433f5dcaf3482d68eaecd79afaf03/numpy-2.4.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:be71bf1edb48ebbbf7f6337b5bfd2f895d1902f6335a5830b20141fc126ffba0", size = 12502577 },
+]
+
+[[package]]
+name = "ocp"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ocp-darwin-amd64", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "ocp-darwin-arm64", marker = "platform_machine == 'aarch64' and sys_platform == 'darwin'" },
+    { name = "ocp-linux-386", marker = "platform_machine == 'i386' and sys_platform == 'linux'" },
+    { name = "ocp-linux-amd64", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "ocp-linux-arm", marker = "platform_machine == 'arm' and sys_platform == 'linux'" },
+    { name = "ocp-linux-arm64", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "ocp-windows-386", marker = "platform_machine == 'i386' and sys_platform == 'win32'" },
+    { name = "ocp-windows-amd64", marker = "platform_machine == 'x86_64' and sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/1b/8e07a130454f86f539245a67ec905d3d9c44a011386eba5ce8528ae8307e/ocp-0.1.4-py3-none-any.whl", hash = "sha256:6986f9e905d9e09570a2295c42b7d047acac628f46c1d160a93bdc645fb981b6", size = 10727 },
+]
+
+[[package]]
+name = "ocp-darwin-amd64"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/60/190b26c6087146e94f05132d242b725ab9e869d48c74c4a8f960f9191ae0/ocp_darwin_amd64-0.1.9-py3-none-any.whl", hash = "sha256:f89eaf3dc87afaf068344b6f8284b3544b3004cc3e9928f7562931dbe73ad628", size = 23521696 },
+]
+
+[[package]]
+name = "ocp-darwin-arm64"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/49/da2c002cf135fd75933295fa9622137554058b9ec162cd142086f9824c63/ocp_darwin_arm64-0.1.9-py3-none-any.whl", hash = "sha256:71fedc02b0173fb71a7cdddeee475c00f34d4db78488ae619c12ec3d43d195f7", size = 22490670 },
+]
+
+[[package]]
+name = "ocp-linux-386"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/09/64737b7fccc65258602d2729c725d4e7312bfdf4d9a4e0d887ad03250693/ocp_linux_386-0.1.4-py3-none-any.whl", hash = "sha256:5843482125c76de0489597fee0ebd3d64f977c40ad25772576e55bd538e95a32", size = 25798728 },
+]
+
+[[package]]
+name = "ocp-linux-amd64"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/40/95c60d2c91bc423e1cb79a5e9b4407241bf1d4a7f97862492f728a96f8cd/ocp_linux_amd64-0.1.9-py3-none-any.whl", hash = "sha256:fc0b03d016a50b5686ea2d9eae9b2a2a7028ff4844adb2a0cb51e96b3f91b16f", size = 24861786 },
+]
+
+[[package]]
+name = "ocp-linux-arm"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/2e/b59820d10d0447b991f4e80235a7c521e8e2ee94af95fdbd73369073156d/ocp_linux_arm-0.1.4-py3-none-any.whl", hash = "sha256:c0e97b9bd07877f8db124eb6a90ec2c60b859307ecb3ae00cd9572393ff17b66", size = 25798728 },
+]
+
+[[package]]
+name = "ocp-linux-arm64"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/1d/30280f41d230aaf0ebc29062454c767fc3f19e3b647dc6ec6f2567a9d190/ocp_linux_arm64-0.1.4-py3-none-any.whl", hash = "sha256:42ae2c7851e1ea1b0cb89d993a3dcbe5bf457ec5842d314521e0df8e13f74c96", size = 25798756 },
+]
+
+[[package]]
+name = "ocp-windows-386"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/0a/eae92bc35a9ecc5073e3dba8d8ba81711b3dcb00064cab2da45c275db635/ocp_windows_386-0.1.4-py3-none-any.whl", hash = "sha256:bbfd05c272d2e80fd83aec24f19229303c096a8175cbff03a6f4f618276cdad0", size = 25798758 },
+]
+
+[[package]]
+name = "ocp-windows-amd64"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/a1/1fca57e9286c7dd2fb5ffa83e7bddbe94073797681e3c8eaaff729ac62c3/ocp_windows_amd64-0.1.9-py3-none-any.whl", hash = "sha256:d0efa1085f4490afee9816a071e16feab302750d8f903665a00eb658d2155c03", size = 23813573 },
 ]
 
 [[package]]
