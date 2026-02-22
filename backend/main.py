@@ -16,6 +16,7 @@ import time
 import math
 from pathlib import Path
 import logging
+import os
 
 from dotenv import load_dotenv
 from google.adk.runners import Runner
@@ -45,7 +46,10 @@ CACHED_MODULES = {
     "math": math,
 }
 
-OUTPUT_PATH = Path("/Users/ryanslocum/Documents/current_courses/semesterProject/cutlist-web/_output")
+OUTPUT_PATH = Path(os.environ.get("OUTPUT_PATH"))
+if not OUTPUT_PATH:
+    logger.warning("OUTPUT_PATH not set in environment variables. Using current directory.")
+    OUTPUT_PATH = Path.cwd()
 
 CODE_ERROR_RETRY_LIMIT = 2
 
