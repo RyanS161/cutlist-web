@@ -32,7 +32,7 @@ from code_utils import extract_code, validate_code_safety, sandbox_code_executio
 from output_utils import save_output_files
 from test_suite import run_test_suite
 
-from logger import make_logger_child
+from logger import make_logger_child, RunMetrics
 
 # Load .env (GOOGLE_API_KEY, etc.)
 load_dotenv()
@@ -61,6 +61,18 @@ CARPENTER_SESSION = f"carpenter_session_{SESSION_ID}"
 QA_SESSION = f"qa_session_{SESSION_ID}"
 
 
+def _count_parts(cad_query_obj) -> int:
+    """Count the number of named parts in a CadQuery object."""
+    if hasattr(cad_query_obj, 'objects') and isinstance(cad_query_obj.objects, dict):
+        return len(cad_query_obj.objects)
+    if hasattr(cad_query_obj, 'vals') and callable(cad_query_obj.vals):
+        try:
+            return len(cad_query_obj.vals())
+        except Exception:
+            pass
+    return 1
+
+
 async def setup_runner(session_service, session_id, agent):
     """Set up separate sessions and runners for each agent."""
     # Create separate sessions for each agent
@@ -74,18 +86,23 @@ async def setup_runner(session_service, session_id, agent):
     )
 
 
-async def call_agent_with_content(runner: Runner, session_id: str, content) -> str:
+async def call_agent_with_content(runner: Runner, session_id: str, content,
+                                  metrics: Optional[RunMetrics] = None,
+                                  agent_role: Optional[str] = None) -> str:
     """Send a message to an agent and collect the full text response.
 
     Args:
         runner: The ADK Runner bound to a specific agent.
         session_id: The session ID to use for this conversation.
         content: The Content object to send.
+        metrics: Optional RunMetrics object to record inference time.
+        agent_role: 'carpenter' or 'qa' to route timing to the correct counter.
 
     Returns:
         The agent's final text response (all text parts concatenated).
     """
     final_response = ""
+    t0 = time.perf_counter()
     async for event in runner.run_async(
         user_id=USER_ID,
         session_id=session_id,
@@ -99,15 +116,23 @@ async def call_agent_with_content(runner: Runner, session_id: str, content) -> s
                     if hasattr(part, 'text') and part.text:
                         text_parts.append(part.text)
                 final_response = "\n".join(text_parts)
+    elapsed = time.perf_counter() - t0
+    if metrics is not None:
+        if agent_role == "carpenter":
+            metrics.carpenter_inference_time_s += elapsed
+        elif agent_role == "qa":
+            metrics.qa_inference_time_s += elapsed
     return final_response
 
-async def call_agent(runner: Runner, session_id: str, message: str) -> str:
+async def call_agent(runner: Runner, session_id: str, message: str,
+                     metrics: Optional[RunMetrics] = None,
+                     agent_role: Optional[str] = None) -> str:
     """Helper to send a text message and get a text response."""
     content = types.Content(
         role="user",
         parts=[types.Part(text=message)],
     )
-    return await call_agent_with_content(runner, session_id, content)
+    return await call_agent_with_content(runner, session_id, content, metrics=metrics, agent_role=agent_role)
 
 async def dump_agent_context(session_service, session_id):
         ## Dump context here for debugging
@@ -146,14 +171,15 @@ async def dump_agent_context(session_service, session_id):
 async def generate_carpenter_result_with_retries(prompt: str,
                                                  carpenter_runner: Runner,
                                                  iteration: Optional[int] = None,
-                                                 retries: int = CODE_ERROR_RETRY_LIMIT) -> cadquery.Workplane | None:
+                                                 retries: int = CODE_ERROR_RETRY_LIMIT,
+                                                 metrics: Optional[RunMetrics] = None) -> cadquery.Workplane | None:
     cad_query_obj = None
     carpenter_response = None
     for i in range(retries):
         logger.info(f"--- Carpenter Attempt {i+1} ---")
         logger.info(f"Prompt:\n{prompt}")
         carpenter_response = await call_agent(
-            carpenter_runner, CARPENTER_SESSION, prompt
+            carpenter_runner, CARPENTER_SESSION, prompt, metrics=metrics, agent_role="carpenter"
         )
         # --- Step 3: Deal with carpenter output ---
         logger.info(f"{'='*20} Carpenter: {'='*20}\n{carpenter_response}")
@@ -162,6 +188,8 @@ async def generate_carpenter_result_with_retries(prompt: str,
         if not extracted_code:
             logger.warning("--- Code Extraction Failed ---")
             logger.warning("No code block found in the response.")
+            if metrics is not None:
+                metrics.carpenter_code_failures += 1
             prompt = "I couldn't find any code in your response. Please provide the CadQuery code for the design in a markdown fenced code block (```python ... ```)."
             continue
 
@@ -170,6 +198,8 @@ async def generate_carpenter_result_with_retries(prompt: str,
         if not code_is_safe:
             logger.warning("--- Code Safety Check Failed ---")
             logger.warning(f"Reason: {reason}")
+            if metrics is not None:
+                metrics.carpenter_code_failures += 1
             prompt = f"The code you provided failed safety checks:\n{reason}\nPlease fix the code to address these issues and provide an updated version."
             continue
         
@@ -178,6 +208,8 @@ async def generate_carpenter_result_with_retries(prompt: str,
         if not result.success:
             logger.error("--- Code Execution Failed ---")
             logger.error(f"Error: {result.msg}")
+            if metrics is not None:
+                metrics.carpenter_code_failures += 1
             prompt = f"The code you provided has issues:\n{result.msg}\nPlease fix the code and provide an updated version."
             continue
         else:
@@ -199,7 +231,8 @@ async def generate_carpenter_result_with_retries(prompt: str,
     return cad_query_obj, extracted_code
 
 
-async def QA_agent_response(qa_runner: Runner, qa_session_id: str, iteration: int, user_prompt: str) -> str:
+async def QA_agent_response(qa_runner: Runner, qa_session_id: str, iteration: int, user_prompt: str,
+                             metrics: Optional[RunMetrics] = None) -> str:
     """Send design artifacts to the QA agent for review.
     
     Loads the views.png and test_results.json from the iteration folder
@@ -245,39 +278,58 @@ async def QA_agent_response(qa_runner: Runner, qa_session_id: str, iteration: in
     content = types.Content(role="user", parts=parts)
     
     # Send to QA agent
-    final_response = await call_agent_with_content(qa_runner, qa_session_id, content)
+    if metrics is not None:
+        metrics.qa_calls += 1
+    final_response = await call_agent_with_content(qa_runner, qa_session_id, content, metrics=metrics, agent_role="qa")
     return final_response
 
 
 
-async def carpenter_only(user_prompt):
-    """Run the Carpenter → compute → QA → Carpenter orchestration loop."""
+def save_run_metrics(metrics: RunMetrics):
+    """Save run metrics to a JSON file in the session output directory."""
+    metrics_path = OUTPUT_PATH / f"{SESSION_ID}" / "run_metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics.to_dict(), f, indent=2)
+    logger.info(f"Saved run metrics to {metrics_path}")
 
+
+async def carpenter_only(user_prompt):
+    """Run only the carpenter agent without QA review."""
+    metrics = RunMetrics(
+        carpenter_model=carpenter_agent.model,
+        qa_model="N/A",
+    )
     session_service = InMemorySessionService()
 
     carpenter_runner = await setup_runner(session_service, CARPENTER_SESSION, carpenter_agent)
 
-    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner)
+    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner, metrics=metrics)
 
+    if cad_query_obj:
+        metrics.num_parts_final = _count_parts(cad_query_obj)
+    save_run_metrics(metrics)
     await dump_agent_context(session_service, CARPENTER_SESSION)
 
 
 
 async def carpenter_qa_loop(user_prompt = None, max_iterations=MAX_QA_ITERATIONS):
-
+    metrics = RunMetrics(
+        carpenter_model=carpenter_agent.model,
+        qa_model=qa_agent.model,
+    )
     session_service = InMemorySessionService()
 
     carpenter_runner = await setup_runner(session_service, CARPENTER_SESSION, carpenter_agent)
     qa_runner = await setup_runner(session_service, QA_SESSION, qa_agent)
 
-    # --- Initital carpenter response
-    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner, iteration=0)
-
+    # --- Initial carpenter response
+    cad_query_obj, result_code = await generate_carpenter_result_with_retries(user_prompt, carpenter_runner, iteration=0, metrics=metrics)
 
     for iteration in range(max_iterations):
         logger.info(f"\n\n{'#' * 10} QA Iteration {iteration} {'#' * 10}\n\n")
 
-        qa_response = await QA_agent_response(qa_runner, QA_SESSION, iteration, user_prompt)
+        qa_response = await QA_agent_response(qa_runner, QA_SESSION, iteration, user_prompt, metrics=metrics)
 
         if "QA_PASSED" in qa_response:
             logger.info("QA agent approved the design. Ending loop.")
@@ -289,8 +341,11 @@ async def carpenter_qa_loop(user_prompt = None, max_iterations=MAX_QA_ITERATIONS
             f"Please revise your design to address the QA's feedback and provide updated CadQuery code"
         )
 
-        cad_query_obj, result_code = await generate_carpenter_result_with_retries(refinement_prompt, carpenter_runner, iteration=iteration + 1)
+        cad_query_obj, result_code = await generate_carpenter_result_with_retries(refinement_prompt, carpenter_runner, iteration=iteration + 1, metrics=metrics)
 
+    if cad_query_obj:
+        metrics.num_parts_final = _count_parts(cad_query_obj)
+    save_run_metrics(metrics)
     await dump_agent_context(session_service, CARPENTER_SESSION)
     await dump_agent_context(session_service, QA_SESSION)
 
