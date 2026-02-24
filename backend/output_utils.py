@@ -174,7 +174,9 @@ def _try_render_assembly_gif(result, output_path: Path) -> bool:
                 else:
                     opacity = 1.0
                 
-                plotter.add_mesh(mesh, color='tan', opacity=opacity)
+                # Color screws grey, structural parts tan
+                color = 'grey' if 'screw' in part_name.lower() else 'tan'
+                plotter.add_mesh(mesh, color=color, opacity=opacity)
             
             # Set camera position
             plotter.camera_position = 'iso'

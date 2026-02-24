@@ -360,6 +360,27 @@ def _extract_solids(result) -> List[Dict[str, Any]]:
     return parts
 
 
+def _is_screw_part(name: str) -> bool:
+    """Check if a part is a screw based on its name."""
+    return 'screw' in name.lower()
+
+
+def _partition_parts(parts: List[Dict[str, Any]]) -> tuple:
+    """Split parts into structural parts and screws.
+    
+    Returns (structural_parts, screw_parts) where each is a list of
+    dicts with 'solid' and 'name' keys.
+    """
+    structural = []
+    screws = []
+    for part in parts:
+        if _is_screw_part(part['name']):
+            screws.append(part)
+        else:
+            structural.append(part)
+    return structural, screws
+
+
 def test_code_executes(code: str, exec_globals: dict) -> TestResult:
     """Test 1: Check if the code executes without errors."""
     try:
@@ -402,14 +423,16 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
 
 
 def test_parts_in_library(result) -> TestResult:
-    """Test 2: Check if all parts meet the design constraints."""
-    parts = _extract_solids(result)
+    """Test 2: Check if all structural (non-screw) parts meet the design constraints."""
+    all_parts = _extract_solids(result)
+    structural_parts, _ = _partition_parts(all_parts)
+    parts = structural_parts  # Only check structural parts; screws have their own test
     
     if not parts:
         return TestResult(
             name="Parts in Library",
             status=TestStatus.SKIPPED,
-            message="No individual parts found to analyze",
+            message="No structural parts found to analyze",
         )
     
     parts_info = []
@@ -531,8 +554,12 @@ def _compute_intersection(solid1, solid2) -> Optional[Any]:
 
 
 def test_no_intersections(result) -> TestResult:
-    """Test 3: Check if any parts intersect with each other."""
-    parts = _extract_solids(result)
+    """Test 3: Check if any structural (non-screw) parts intersect with each other.
+    
+    Screws are excluded because they intentionally overlap with the parts they fasten.
+    """
+    all_parts = _extract_solids(result)
+    parts, _ = _partition_parts(all_parts)  # Only check structural parts
     
     if len(parts) < 2:
         return TestResult(
@@ -709,13 +736,14 @@ def test_static_stability(result: Any) -> TestResult:
     if its projection onto the ground lies within the support base.
     """
     try:
-        # Extract solids
-        parts = _extract_solids(result)
+        # Extract solids — exclude screws (negligible mass)
+        all_parts = _extract_solids(result)
+        parts, _ = _partition_parts(all_parts)
         if not parts:
             return TestResult(
                 name="Static Stability",
                 status=TestStatus.SKIPPED,
-                message="No parts found to test",
+                message="No structural parts found to test",
             )
 
         # 1. Calculate Combined Center of Mass (CoM)
@@ -830,6 +858,269 @@ def test_static_stability(result: Any) -> TestResult:
         )
 
 
+def test_screw_dimensions(result) -> TestResult:
+    """Test 6: Check if all screws match the dimensions in the part library."""
+    all_parts = _extract_solids(result)
+    _, screws = _partition_parts(all_parts)
+    
+    if not screws:
+        return TestResult(
+            name="Screw Dimensions",
+            status=TestStatus.SKIPPED,
+            message="No screws found in the design",
+        )
+    
+    # Get screw specs from library
+    screw_specs = PART_LIBRARY.get('screw')
+    if not screw_specs:
+        return TestResult(
+            name="Screw Dimensions",
+            status=TestStatus.ERROR,
+            message="No screw definition found in parts library",
+        )
+    
+    expected_r = screw_specs['r']
+    expected_z = screw_specs['z']
+    # For a cylinder(r, z), the OBB sorted dims are [2*r, 2*r, z]
+    expected_dims = sorted([2 * expected_r, 2 * expected_r, expected_z])
+    tolerance = 1.0  # mm
+    
+    violations = []
+    
+    for screw in screws:
+        sorted_dims = _get_oriented_dims(screw['solid'])
+        if sorted_dims is None:
+            violations.append(f"Screw '{screw['name']}': Could not determine dimensions")
+            continue
+        
+        # Compare each dimension
+        diff = sum(abs(a - b) for a, b in zip(sorted_dims, expected_dims))
+        if diff > tolerance * 3:
+            violations.append(
+                f"Screw '{screw['name']}': Dimensions "
+                f"{sorted_dims[0]:.1f}x{sorted_dims[1]:.1f}x{sorted_dims[2]:.1f}mm "
+                f"do not match expected "
+                f"{expected_dims[0]:.1f}x{expected_dims[1]:.1f}x{expected_dims[2]:.1f}mm"
+            )
+    
+    if violations:
+        return TestResult(
+            name="Screw Dimensions",
+            status=TestStatus.FAILED,
+            message=f"{len(violations)} screw dimension violation(s) found",
+            long_message="\n".join(violations),
+            details={'violations': violations, 'screws_analyzed': len(screws)},
+        )
+    
+    return TestResult(
+        name="Screw Dimensions",
+        status=TestStatus.PASSED,
+        message=f"All {len(screws)} screw(s) match library dimensions",
+        details={'screws_analyzed': len(screws)},
+    )
+
+
+def _compute_supported_set(
+    placed_structural: List[Dict[str, Any]],
+    placed_screws: List[Dict[str, Any]],
+    ground_threshold: float,
+) -> set:
+    """Compute which structural parts are physically supported at a given assembly stage.
+    
+    BFS from ground-touching parts through two types of support edges:
+      - Gravity: part V rests on top of part U  (V.zmin ≈ U.zmax and touching)
+      - Screw:   a placed screw touches both U and V  (bidirectional)
+    
+    Returns the set of indices into *placed_structural* that are supported.
+    """
+    n = len(placed_structural)
+    if n == 0:
+        return set()
+
+    # Cache bounding boxes
+    bbs = []
+    for part in placed_structural:
+        try:
+            bbs.append(part['solid'].BoundingBox())
+        except Exception:
+            bbs.append(None)
+
+    # 1. Identify ground-touching parts
+    grounded = set()
+    for i in range(n):
+        if bbs[i] is None:
+            grounded.add(i)          # can't verify → assume ok
+        elif bbs[i].zmin <= ground_threshold:
+            grounded.add(i)
+
+    # 2. Build adjacency: can_support[u] = set of parts that become supported when u is
+    can_support: List[set] = [set() for _ in range(n)]
+
+    # Gravity edges: u supports v if v sits on u  (v.zmin ≈ u.zmax)
+    for v in range(n):
+        if bbs[v] is None:
+            continue
+        for u in range(n):
+            if u == v or bbs[u] is None:
+                continue
+            if abs(bbs[v].zmin - bbs[u].zmax) < 2.0:
+                if _are_parts_connected(
+                    placed_structural[v]['solid'],
+                    placed_structural[u]['solid'],
+                    tolerance=1.0,
+                ):
+                    can_support[u].add(v)
+
+    # Screw edges: bidirectional between structural parts linked by a screw
+    for screw in placed_screws:
+        connected = []
+        for i in range(n):
+            if _are_parts_connected(
+                screw['solid'],
+                placed_structural[i]['solid'],
+                tolerance=2.0,
+            ):
+                connected.append(i)
+        for a in connected:
+            for b in connected:
+                if a != b:
+                    can_support[a].add(b)
+
+    # 3. BFS from grounded parts
+    supported = set(grounded)
+    queue = list(grounded)
+    while queue:
+        u = queue.pop(0)
+        for v in can_support[u]:
+            if v not in supported:
+                supported.add(v)
+                queue.append(v)
+
+    return supported
+
+
+def test_assembly_order(result) -> TestResult:
+    """Test 7: Verify every part is physically supported at each assembly stage.
+    
+    Simulates the assembly in the order parts are added.  Parts are grouped into
+    *stages*: each structural part together with any screws immediately following
+    it.  After each stage the test checks that every placed structural part is
+    reachable from the ground through a chain of:
+      • Ground contact  (part touches z ≈ 0)
+      • Gravity support  (part rests on top of a supported part)
+      • Screw fastening  (a screw connects the part to a supported part)
+    
+    If any structural part is unreachable it "would fall" at that stage.
+    """
+    all_parts = _extract_solids(result)
+
+    if len(all_parts) < 2:
+        return TestResult(
+            name="Assembly Order",
+            status=TestStatus.SKIPPED,
+            message="Fewer than 2 parts — nothing to verify",
+        )
+
+    # Determine the ground plane
+    ground_z = float('inf')
+    for part in all_parts:
+        try:
+            bb = part['solid'].BoundingBox()
+            if bb.zmin < ground_z:
+                ground_z = bb.zmin
+        except Exception:
+            pass
+
+    if ground_z == float('inf'):
+        return TestResult(
+            name="Assembly Order",
+            status=TestStatus.ERROR,
+            message="Could not determine ground level from parts",
+        )
+
+    ground_threshold = ground_z + 1.0  # 1 mm tolerance
+
+    # ── Group parts into assembly stages ──────────────────────────────────
+    # A stage = one structural part + any screws that immediately follow it.
+    # This mirrors real assembly: place the part, then drive the screw(s).
+    stages: List[List[Dict[str, Any]]] = []
+    current_stage: List[Dict[str, Any]] = []
+    for part in all_parts:
+        if _is_screw_part(part['name']):
+            current_stage.append(part)
+        else:
+            if current_stage:
+                stages.append(current_stage)
+            current_stage = [part]
+    if current_stage:
+        stages.append(current_stage)
+
+    # ── Simulate assembly stage by stage ──────────────────────────────────
+    placed_structural: List[Dict[str, Any]] = []
+    placed_screws: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    already_failed: set = set()          # track names so we report first occurrence only
+
+    for stage_idx, stage in enumerate(stages):
+        # Place every part in this stage
+        new_structural_names = []
+        for part in stage:
+            if _is_screw_part(part['name']):
+                placed_screws.append(part)
+            else:
+                placed_structural.append(part)
+                new_structural_names.append(part['name'])
+
+        # Pure-screw stages (e.g. leading screws) — skip the check
+        if not new_structural_names:
+            continue
+
+        supported = _compute_supported_set(
+            placed_structural, placed_screws, ground_threshold
+        )
+
+        for i, part in enumerate(placed_structural):
+            if i not in supported and part['name'] not in already_failed:
+                already_failed.add(part['name'])
+                failures.append({
+                    'stage': stage_idx + 1,
+                    'name': part['name'],
+                    'total_placed': len(placed_structural),
+                    'screws_available': len(placed_screws),
+                })
+
+    if failures:
+        descs = [
+            f"Stage {f['stage']}: Part '{f['name']}' would fall "
+            f"(not on ground, not resting on a supported part, "
+            f"and no screw attaching it to a supported part)"
+            for f in failures
+        ]
+        return TestResult(
+            name="Assembly Order",
+            status=TestStatus.FAILED,
+            message=f"{len(failures)} part(s) unsupported during assembly",
+            long_message=(
+                "The following parts are not physically supported when placed. "
+                "Parts are grouped with any screws that immediately follow them "
+                "in the assembly order.  Consider reordering the assembly or "
+                "adding screws before the unsupported part.\n"
+                + "\n".join(descs)
+            ),
+            details={
+                'failures': failures,
+                'total_stages': len(stages),
+            },
+        )
+
+    return TestResult(
+        name="Assembly Order",
+        status=TestStatus.PASSED,
+        message=f"All parts supported through {len(stages)} assembly stages",
+        details={'total_stages': len(stages)},
+    )
+
+
 def run_test_suite(design: str) -> TestSuiteResult:
     """Run the full test suite on the provided code."""
     tests: List[TestResult] = []
@@ -845,10 +1136,17 @@ def run_test_suite(design: str) -> TestSuiteResult:
     stability_result = test_static_stability(design)
     tests.append(stability_result)
     
-    # Test 5: Part Connectivity
+    # Test 5: Part Connectivity (includes screws — they must not be disjoint)
     connectivity_result = test_connectivity(design)
     tests.append(connectivity_result)
-
+    
+    # Test 6: Screw Dimensions
+    screw_dims_result = test_screw_dimensions(design)
+    tests.append(screw_dims_result)
+    
+    # Test 7: Assembly Order (step-by-step support verification)
+    assembly_order_result = test_assembly_order(design)
+    tests.append(assembly_order_result)
     
     # Count results
     passed = sum(1 for t in tests if t.status == TestStatus.PASSED)

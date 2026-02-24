@@ -10,8 +10,9 @@ for z in range(100, 501, 50):
     part_name = f"beam_48x24x{z}"
     PART_LIBRARY[part_name] = {'x': 48, 'y': 24, 'z': z}
 
+PART_LIBRARY['screw'] = {'r': 2, 'z': 25}
 
-PART_LIBRARY['plywood_7mm'] = {'z': 7, 'max_width': 500, 'max_height': 500}
+PART_LIBRARY['plywood'] = {'z': 7, 'max_width': 500, 'max_height': 500}
 
 def generate_part_table():
     """Generate a markdown table of available parts from the PART_LIBRARY."""
@@ -22,9 +23,11 @@ def generate_part_table():
     for part_name, specs in PART_LIBRARY.items():
         if 'x' in specs and 'y' in specs and 'z' in specs:
             dimensions = f"{specs['x']} x {specs['y']} x {specs['z']}"
+        if 'r' in specs and 'z' in specs:
+            dimensions = f"Radius {specs['r']} x Length {specs['z']}"
         table += f"| {part_name} | {dimensions} |\n"
 
-    table += "\nParts with variable dimensions (plywood sheets)\n"
+    table += "\nParts with variable dimensions\n"
     table += "| Part Name | Thickness (mm) | Max Width (mm) | Max Height (mm) |\n"
     table += "|-----------|----------------|----------------|----------------|\n"
     for part_name, specs in PART_LIBRARY.items():
