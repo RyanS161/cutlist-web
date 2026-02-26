@@ -47,6 +47,12 @@ parser.add_argument(
     help="Design prompt (if not provided, prompts interactively)"
 )
 parser.add_argument(
+    "-t", "--txt_file",
+    type=str,
+    default=None,
+    help="Path to a .txt file containing the design prompts (overrides --prompt)"
+)
+parser.add_argument(
     "-m", "--method",
     type=str,
     default="carpenter_only",
@@ -60,6 +66,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 USER_PROMPT = args.prompt
+TXT_FILE = args.txt_file
 METHOD = args.method
 USE_SIM = args.sim
 
@@ -386,12 +393,31 @@ async def carpenter_qa_loop(user_prompt = None, max_iterations=MAX_QA_ITERATIONS
 
 
 if __name__ == "__main__":
-    logger.info("=" * 20 + "  Cutlist Carpenter — Agentic Workflow Demo" + "=" * 20)
-    # Get prompt from args or interactive input
-    if not USER_PROMPT:
-        USER_PROMPT = input("\nDescribe your woodworking project:\n> ")
 
+    prompts = []
+
+    if TXT_FILE:
+        if not os.path.exists(TXT_FILE):
+            logger.error(f"Specified txt file does not exist: {TXT_FILE}")
+            exit(1)
+        with open(TXT_FILE, "r") as f:
+            prompts = [line.strip() for line in f if line.strip()]
+        logger.info(f"Loaded {len(prompts)} prompts from {TXT_FILE}")
+    else:
+        if not USER_PROMPT:
+            USER_PROMPT = input("\nDescribe your woodworking project:\n> ")
+        prompts = [USER_PROMPT,]
+    
+    if METHOD == "carpenter_only":
+       runner_function = carpenter_only
+    elif METHOD == "carpenter_qa_loop":
+        runner_function = carpenter_qa_loop
+    else:
+        logger.error(f"Unknown method: {METHOD}")
+        exit(1)
+    
     if USE_SIM:
+    # Start the sim environment if requested (and shut it down at the end)
         start_config = {
                         "num_envs": 1,
                         "task": "Template-Pose-Orientation-Two-Robots-Direct-v0"
@@ -402,14 +428,9 @@ if __name__ == "__main__":
             logger.warning("Simulation server did not become ready within 90s")
         else:
             logger.info("Simulation server is ready.")
-
-    # Run the main loop
-    if METHOD == "carpenter_only":
-        asyncio.run(carpenter_only(USER_PROMPT))
-    elif METHOD == "carpenter_qa_loop":
-        asyncio.run(carpenter_qa_loop(USER_PROMPT))
-    else:
-        logger.error(f"Unknown method: {METHOD}")
+    
+    for prompt in prompts:
+        asyncio.run(runner_function(prompt))
 
     if USE_SIM:
         # Shut down the sim environment after the run
