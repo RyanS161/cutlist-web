@@ -31,14 +31,37 @@ from cutlist_agent.sub_agents.qa_agent import qa_agent
 from code_utils import extract_code, validate_code_safety, sandbox_code_execution
 from output_utils import save_output_files
 from test_suite import run_test_suite
+from sim_env import setup_sim_environment, shutdown_sim_environment
 
 from logger import make_logger_child, RunMetrics
 
 # Load .env (GOOGLE_API_KEY, etc.)
 load_dotenv()
 
-
 logger = make_logger_child("main")
+parser = argparse.ArgumentParser(description="Cutlist Carpenter agentic workflow")
+parser.add_argument(
+    "-p", "--prompt",
+    type=str,
+    default=None,
+    help="Design prompt (if not provided, prompts interactively)"
+)
+parser.add_argument(
+    "-m", "--method",
+    type=str,
+    default="carpenter_only",
+    choices=["carpenter_only", "carpenter_qa_loop"],
+    help="Which workflow method to run"
+)
+parser.add_argument(
+    "--sim",
+    action="store_true",
+    help="Use the simulation environment test in the test suite (requires sim server to be running)"
+)
+args = parser.parse_args()
+USER_PROMPT = args.prompt
+METHOD = args.method
+USE_SIM = args.sim
 
 CACHED_MODULES = {
     "cq": cadquery,
@@ -220,12 +243,24 @@ async def generate_carpenter_result_with_retries(prompt: str,
         logger.error(f"Failed to get a valid design after {retries} attempts.")
         return None, carpenter_response
     else:
-        test_result = run_test_suite(cad_query_obj)
+        # Export output files first so parts.json exists for the sim test
+        iter_dir = save_output_files(OUTPUT_PATH,
+                                    SESSION_ID,
+                                    iteration=iteration,
+                                    cad_query_obj=cad_query_obj,
+                                    code=extracted_code)
+
+        if USE_SIM:
+            parts_json_path = str(iter_dir / "parts.json")
+        else: 
+            parts_json_path = None
+
+        test_result = run_test_suite(cad_query_obj, parts_json_path=parts_json_path)
+
+        # Save the test results alongside the other outputs
         save_output_files(OUTPUT_PATH,
                         SESSION_ID,
                         iteration=iteration,
-                        cad_query_obj=cad_query_obj,
-                        code=extracted_code,
                         test_result_obj=test_result)
 
     return cad_query_obj, extracted_code
@@ -351,33 +386,25 @@ async def carpenter_qa_loop(user_prompt = None, max_iterations=MAX_QA_ITERATIONS
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Cutlist Carpenter agentic workflow")
-    parser.add_argument(
-        "-p", "--prompt",
-        type=str,
-        default=None,
-        help="Design prompt (if not provided, prompts interactively)"
-    )
-    parser.add_argument(
-        "-m", "--method",
-        type=str,
-        default="carpenter_only",
-        choices=["carpenter_only", "carpenter_qa_loop"],
-        help="Which workflow method to run"
-    )
-    args = parser.parse_args()
-    user_prompt = args.prompt
-    method = args.method
-
     logger.info("=" * 20 + "  Cutlist Carpenter — Agentic Workflow Demo" + "=" * 20)
     # Get prompt from args or interactive input
-    if not user_prompt:
-        user_prompt = input("\nDescribe your woodworking project:\n> ")
+    if not USER_PROMPT:
+        USER_PROMPT = input("\nDescribe your woodworking project:\n> ")
+
+    if USE_SIM:
+        # Start the sim environment in the background
+        sim_thread = setup_sim_environment(config={"task": "assembly", "num_envs": 1})
+        # Give it a moment to start up (in a real implementation, you'd want a more robust way to check readiness)
+        time.sleep(5)
 
     # Run the main loop
-    if method == "carpenter_only":
-        asyncio.run(carpenter_only(user_prompt))
-    elif method == "carpenter_qa_loop":
-        asyncio.run(carpenter_qa_loop(user_prompt))
+    if METHOD == "carpenter_only":
+        asyncio.run(carpenter_only(USER_PROMPT))
+    elif METHOD == "carpenter_qa_loop":
+        asyncio.run(carpenter_qa_loop(USER_PROMPT))
     else:
-        logger.error(f"Unknown method: {method}")
+        logger.error(f"Unknown method: {METHOD}")
+
+    if USE_SIM:
+        # Shut down the sim environment after the run
+        shutdown_sim_environment()

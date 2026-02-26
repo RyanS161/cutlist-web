@@ -1,6 +1,9 @@
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
+from pathlib import Path
+import json
+import cadquery as cq
 
 from OCP.BRepBndLib import BRepBndLib
 from OCP.Bnd import Bnd_OBB
@@ -9,6 +12,7 @@ from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 
 from part_library import PART_LIBRARY
 from logger import make_logger_child
+from sim_env import run_sim_test
 
 logger = make_logger_child("main")
 
@@ -521,7 +525,6 @@ def _compute_intersection(solid1, solid2) -> Optional[Any]:
     """
     try:
         # Import cadquery for boolean operations
-        import cadquery as cq
         
         # Get the underlying shape objects
         shape1 = solid1
@@ -1121,8 +1124,92 @@ def test_assembly_order(result) -> TestResult:
     )
 
 
-def run_test_suite(design: str) -> TestSuiteResult:
-    """Run the full test suite on the provided code."""
+def test_sim_assemblability(parts_json_path) -> TestResult:
+    """Test 8: Physics-based assemblability check via the simulation server.
+    
+    Reads the parts.json file (already exported by output_utils) and sends
+    it directly to the sim server for physics-based verification.
+    
+    Gracefully skips if the sim server is unreachable or no file is provided.
+    """
+
+    parts_file = Path(parts_json_path)
+    if not parts_file.exists():
+        logger.warning(f"Parts file not found for sim test: {parts_file}")
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.SKIPPED,
+            message=f"Parts file not found: {parts_file}",
+        )
+
+    try:
+        with open(parts_file, 'r') as f:
+            parts_data = json.load(f)
+    except Exception as exc:
+        logger.error(f"Failed to read parts.json at {parts_file} for sim test: {exc}", exc_info=True)
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.ERROR,
+            message=f"Failed to read parts.json: {exc}",
+        )
+
+    parts_list = parts_data.get("parts", [])
+    if not parts_list:
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.SKIPPED,
+            message="parts.json contains no parts",
+        )
+
+    try:
+        sim_result = run_sim_test(parts_list)
+    except Exception as exc:
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.ERROR,
+            message=f"Sim server error: {exc}",
+        )
+
+    # 5. Interpret the response
+    passed = sim_result.get("passed", sim_result.get("success", False))
+    detail_msg = sim_result.get("message", "")
+    failed_parts = sim_result.get("failed_parts", [])
+
+    if passed:
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.PASSED,
+            message=detail_msg or "Simulation confirms assemblability",
+            details=sim_result,
+        )
+    else:
+        fail_descs = []
+        for fp in failed_parts:
+            name = fp.get("name", "unknown")
+            reason = fp.get("reason", "fell or became unstable")
+            fail_descs.append(f"- '{name}': {reason}")
+
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.FAILED,
+            message=detail_msg or f"{len(failed_parts)} part(s) failed simulation",
+            long_message=(
+                "The following parts failed the physics simulation:\n"
+                + "\n".join(fail_descs)
+            ) if fail_descs else None,
+            details=sim_result,
+        )
+
+
+def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteResult:
+    """Run the full test suite on the provided CadQuery result.
+    
+    Args:
+        design: The CadQuery Assembly / Workplane result object.
+        parts_json_path: Optional path to the parts.json file (already
+            exported by output_utils). If provided, the sim-based
+            assemblability test will send it to the simulation server.
+    """
     tests: List[TestResult] = []
     
     constraint_result = test_parts_in_library(design)
@@ -1147,6 +1234,11 @@ def run_test_suite(design: str) -> TestSuiteResult:
     # Test 7: Assembly Order (step-by-step support verification)
     assembly_order_result = test_assembly_order(design)
     tests.append(assembly_order_result)
+    
+    # Test 8: Sim-based assemblability (skips gracefully if server unavailable)
+    if parts_json_path is not None:
+        sim_result = test_sim_assemblability(parts_json_path)
+        tests.append(sim_result)
     
     # Count results
     passed = sum(1 for t in tests if t.status == TestStatus.PASSED)

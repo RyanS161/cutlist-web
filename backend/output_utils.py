@@ -68,6 +68,8 @@ def save_output_files(output_path: Path,
         else:
             logger.error(f"Test result export failed for {base_id}")
 
+    return iteration_path
+
 
 def _try_render_assembly_gif(result, output_path: Path) -> bool:
     """Render an animated GIF showing parts being assembled one by one.
