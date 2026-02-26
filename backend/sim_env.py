@@ -15,6 +15,7 @@ All functions are synchronous and use httpx for HTTP calls.
 
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -70,6 +71,33 @@ def _get(path: str) -> Dict[str, Any]:
         raise
 
 
+def check_sim_health(require_ready: bool = False) -> bool:
+    """Return True if the sim server is reachable.
+
+    Args:
+        require_ready: If True, only returns True when server state is "ready".
+            If False, any non-error reachable state is considered healthy.
+    """
+    try:
+        status = _get("/status")
+        state = str(status.get("state", "")).lower()
+        if require_ready:
+            return state == "ready"
+        return state in {"idle", "ready", "testing"}
+    except Exception:
+        return False
+
+
+def wait_for_sim_ready(timeout_s: float = 60.0, poll_interval_s: float = 0.5) -> bool:
+    """Poll /status until the server reports state='ready' or timeout expires."""
+    t0 = time.perf_counter()
+    while (time.perf_counter() - t0) < timeout_s:
+        if check_sim_health(require_ready=True):
+            return True
+        time.sleep(poll_interval_s)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -118,9 +146,20 @@ def run_sim_test(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
         raise ValueError("parts list must not be empty")
     logger.info(f"Running sim test with {len(parts)} parts …")
     try:
-        result = _post("/test", payload={"parts": parts}, timeout=15.0)
+        # Ask server to abort long-running tests before the HTTP client times out.
+        client_timeout = float(os.environ.get("SIM_TEST_HTTP_TIMEOUT", "120"))
+        server_timeout = float(os.environ.get("SIM_TEST_SERVER_TIMEOUT", str(max(15.0, client_timeout - 5.0))))
+        result = _post(
+            "/test",
+            payload={
+                "parts": parts,
+                "test_timeout_s": server_timeout,
+                "post_close_updates": int(os.environ.get("SIM_POST_CLOSE_UPDATES", "12")),
+            },
+            timeout=client_timeout,
+        )
     except httpx.TimeoutException:
-        raise TimeoutError("Sim test timed out after 15 seconds")
+        raise TimeoutError(f"Sim test timed out after {client_timeout:.1f} seconds")
     logger.info(f"Sim test complete: {result}")
     return result
 

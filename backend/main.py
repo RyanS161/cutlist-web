@@ -31,7 +31,7 @@ from cutlist_agent.sub_agents.qa_agent import qa_agent
 from code_utils import extract_code, validate_code_safety, sandbox_code_execution
 from output_utils import save_output_files
 from test_suite import run_test_suite
-from sim_env import setup_sim_environment, shutdown_sim_environment
+from sim_env import setup_sim_environment, shutdown_sim_environment, wait_for_sim_ready
 
 from logger import make_logger_child, RunMetrics
 
@@ -392,10 +392,16 @@ if __name__ == "__main__":
         USER_PROMPT = input("\nDescribe your woodworking project:\n> ")
 
     if USE_SIM:
-        # Start the sim environment in the background
-        sim_thread = setup_sim_environment(config={"task": "assembly", "num_envs": 1})
-        # Give it a moment to start up (in a real implementation, you'd want a more robust way to check readiness)
-        time.sleep(5)
+        start_config = {
+                        "num_envs": 1,
+                        "task": "Template-Pose-Orientation-Two-Robots-Direct-v0"
+                        }
+        setup_sim_environment(config=start_config)
+        # # Wait until /start has actually finished to avoid queuing /test too early.
+        if not wait_for_sim_ready(timeout_s=60.0, poll_interval_s=0.5):
+            logger.warning("Simulation server did not become ready within 90s")
+        else:
+            logger.info("Simulation server is ready.")
 
     # Run the main loop
     if METHOD == "carpenter_only":

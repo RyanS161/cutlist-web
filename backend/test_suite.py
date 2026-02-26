@@ -1171,30 +1171,46 @@ def test_sim_assemblability(parts_json_path) -> TestResult:
         )
 
     # 5. Interpret the response
-    passed = sim_result.get("passed", sim_result.get("success", False))
-    detail_msg = sim_result.get("message", "")
-    failed_parts = sim_result.get("failed_parts", [])
+    assembleable_per_env = sim_result.get("assembleable_per_env")
+    timed_out = bool(sim_result.get("timed_out", False))
+    timed_out_reason = sim_result.get("timed_out_reason")
 
-    if passed:
+    if isinstance(assembleable_per_env, list):
+        passed = all(bool(x) for x in assembleable_per_env)
+    else:
+        # Backward compatibility if server response schema changes
+        passed = bool(sim_result.get("passed", sim_result.get("success", False)))
+
+    if passed and not timed_out:
         return TestResult(
             name="Sim Assemblability",
             status=TestStatus.PASSED,
-            message=detail_msg or "Simulation confirms assemblability",
+            message="Simulation confirms assemblability",
             details=sim_result,
         )
     else:
         fail_descs = []
-        for fp in failed_parts:
-            name = fp.get("name", "unknown")
-            reason = fp.get("reason", "fell or became unstable")
-            fail_descs.append(f"- '{name}': {reason}")
+        if isinstance(assembleable_per_env, list):
+            for idx, ok in enumerate(assembleable_per_env):
+                if not bool(ok):
+                    fail_descs.append(f"- env {idx}: assembly not stable/assemblable")
+
+        if timed_out:
+            fail_descs.append(f"- simulation timed out ({timed_out_reason or 'unknown reason'})")
+
+        summary = (
+            f"Simulation failed for {sum(not bool(x) for x in assembleable_per_env)} "
+            f"environment(s)"
+            if isinstance(assembleable_per_env, list)
+            else "Simulation reported failure"
+        )
 
         return TestResult(
             name="Sim Assemblability",
             status=TestStatus.FAILED,
-            message=detail_msg or f"{len(failed_parts)} part(s) failed simulation",
+            message=summary,
             long_message=(
-                "The following parts failed the physics simulation:\n"
+                "The following simulation checks failed:\n"
                 + "\n".join(fail_descs)
             ) if fail_descs else None,
             details=sim_result,
