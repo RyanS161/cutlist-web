@@ -11,7 +11,6 @@ from logger import make_logger_child
 logger = make_logger_child("output")
 
 def save_output_files(output_path: Path, 
-                      base_id: str,
                       iteration: Optional[int] = None,
                       cad_query_obj = None,
                       code: str = None,
@@ -23,50 +22,50 @@ def save_output_files(output_path: Path,
     """
 
     if iteration is None:
-        iteration_path = output_path / str(base_id) / "final"
+        iteration_path = output_path / "final"
     else:
-        iteration_path = output_path / str(base_id) / f"iteration_{iteration}"
+        iteration_path = output_path / f"iteration_{iteration}"
 
     os.makedirs(iteration_path, exist_ok=True)
 
     if cad_query_obj:
         views_success = _try_render_views(cad_query_obj, iteration_path)
         if views_success:
-            logger.info(f"View rendering successful for {base_id}")
+            logger.info(f"View rendering successful")
         else:
-            logger.error(f"View rendering not applicable for {base_id}")
+            logger.error(f"View rendering not applicable")
         
         gif_success = _try_render_assembly_gif(cad_query_obj, iteration_path)
         if gif_success:
-            logger.info(f"Assembly GIF rendering successful for {base_id}")
+            logger.info(f"Assembly GIF rendering successful")
         else:
-            logger.error(f"Assembly GIF rendering not applicable for {base_id}")
+            logger.error(f"Assembly GIF rendering not applicable")
         
         stl_success = _try_export_stl(cad_query_obj, iteration_path)
         if stl_success:
-            logger.info(f"STL export successful for {base_id}")
+            logger.info(f"STL export successful")
         else:
-            logger.error(f"STL export not applicable for {base_id}")
+            logger.error(f"STL export not applicable")
 
         parts_json_success = _try_export_parts_json(cad_query_obj, iteration_path)
         if parts_json_success:
-            logger.info(f"Parts JSON export successful for {base_id}")
+            logger.info(f"Parts JSON export successful")
         else:
-            logger.error(f"Parts JSON export not applicable for {base_id}")
+            logger.error(f"Parts JSON export not applicable")
     
     if code:
         code_success = _try_export_code(code, iteration_path)
         if code_success:
-            logger.info(f"Code export successful for {base_id}")
+            logger.info(f"Code export successful")
         else:
-            logger.error(f"Code export failed for {base_id}")
+            logger.error(f"Code export failed")
 
     if test_result_obj:
         test_result_success = _try_export_test_suite_results(test_result_obj, iteration_path)
         if test_result_success:
-            logger.info(f"Test result export successful for {base_id}")
+            logger.info(f"Test result export successful")
         else:
-            logger.error(f"Test result export failed for {base_id}")
+            logger.error(f"Test result export failed")
 
     return iteration_path
 
