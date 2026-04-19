@@ -85,10 +85,13 @@ if __name__ == "__main__":
                         "num_envs": 1,
                         "task": "Template-Pose-Orientation-Two-Robots-Direct-v0"
                         }
+        logger.info("Starting simulation server")
         setup_sim_environment(config=start_config)
         # # Wait until /start has actually finished to avoid queuing /test too early.
-        if not wait_for_sim_ready(timeout_s=60.0, poll_interval_s=0.5):
-            logger.warning("Simulation server did not become ready within 90s")
+        timeout = 60
+        if not wait_for_sim_ready(timeout_s=timeout, poll_interval_s=0.5):
+            logger.warning(f"Simulation server did not become ready within {timeout} seconds. Exiting")
+            exit()
         else:
             logger.info("Simulation server is ready.")
     
