@@ -426,6 +426,28 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
         )
 
 
+def test_max_parts(result) -> TestResult:
+    """Test 1: Check if the design has at most 32 parts (including screws)."""
+    all_parts = _extract_solids(result)
+    total_parts = len(all_parts)
+    max_parts = 32
+
+    if total_parts <= max_parts:
+        return TestResult(
+            name="Max Parts Constraint",
+            status=TestStatus.PASSED,
+            message=f"Design has {total_parts} part(s), within the {max_parts} part limit",
+            details={'total_parts': total_parts, 'max_parts': max_parts},
+        )
+    else:
+        return TestResult(
+            name="Max Parts Constraint",
+            status=TestStatus.FAILED,
+            message=f"Design has {total_parts} part(s), exceeds the {max_parts} part limit",
+            details={'total_parts': total_parts, 'max_parts': max_parts},
+        )
+
+
 def test_parts_in_library(result) -> TestResult:
     """Test 2: Check if all structural (non-screw) parts meet the design constraints."""
     all_parts = _extract_solids(result)
@@ -1219,7 +1241,7 @@ def test_sim_assemblability(parts_json_path) -> TestResult:
 
 def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteResult:
     """Run the full test suite on the provided CadQuery result.
-    
+
     Args:
         design: The CadQuery Assembly / Workplane result object.
         parts_json_path: Optional path to the parts.json file (already
@@ -1227,9 +1249,33 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
             assemblability test will send it to the simulation server.
     """
     tests: List[TestResult] = []
-    
-    constraint_result = test_parts_in_library(design)
-    tests.append(constraint_result)
+
+    def test_results(tests):
+        # Count results
+        passed = sum(1 for t in tests if t.status == TestStatus.PASSED)
+        failed = sum(1 for t in tests if t.status == TestStatus.FAILED)
+        skipped = sum(1 for t in tests if t.status == TestStatus.SKIPPED)
+        errors = sum(1 for t in tests if t.status == TestStatus.ERROR)
+
+        return TestSuiteResult(
+            passed=passed,
+            failed=failed,
+            skipped=skipped,
+            errors=errors,
+            tests=tests,
+        )
+
+    # Test 1: Max parts constraint
+    max_parts_result = test_max_parts(design)
+    tests.append(max_parts_result)
+    if max_parts_result.status != TestStatus.PASSED:
+        return test_results(tests)  # Fail fast if part count exceeds limit
+
+    # Test 2: Parts in library
+    library_result = test_parts_in_library(design)
+    tests.append(library_result)
+    if library_result.status != TestStatus.PASSED:
+        return test_results(tests)  # Fail fast if parts violate library constraints
     
     # Test 3: Check for part intersections
     intersection_result = test_no_intersections(design)
@@ -1252,20 +1298,8 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
     tests.append(assembly_order_result)
     
     # Test 8: Sim-based assemblability (skips gracefully if server unavailable)
-    if parts_json_path is not None:
-        sim_result = test_sim_assemblability(parts_json_path)
-        tests.append(sim_result)
+    sim_result = test_sim_assemblability(parts_json_path)
+    tests.append(sim_result)
     
-    # Count results
-    passed = sum(1 for t in tests if t.status == TestStatus.PASSED)
-    failed = sum(1 for t in tests if t.status == TestStatus.FAILED)
-    skipped = sum(1 for t in tests if t.status == TestStatus.SKIPPED)
-    errors = sum(1 for t in tests if t.status == TestStatus.ERROR)
-    
-    return TestSuiteResult(
-        passed=passed,
-        failed=failed,
-        skipped=skipped,
-        errors=errors,
-        tests=tests,
-    )
+
+    return
