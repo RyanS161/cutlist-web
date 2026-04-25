@@ -10,7 +10,7 @@ for z in range(100, 501, 50):
     part_name = f"beam_48x24x{z}"
     PART_LIBRARY[part_name] = {'x': 48, 'y': 24, 'z': z}
 
-PART_LIBRARY['screw'] = {'r': 2, 'z': 25}
+PART_LIBRARY['screw'] = {'r': 2, 'z': 30}
 
 PART_LIBRARY['plywood'] = {'z': 7, 'max_width': 500, 'max_height': 500}
 
