@@ -17,7 +17,6 @@ import time
 
 from dotenv import load_dotenv
 
-from sim_env import setup_sim_environment, shutdown_sim_environment, wait_for_sim_ready
 from session import CutlistSession
 
 from logger import make_logger_child
@@ -49,7 +48,7 @@ parser.add_argument(
 parser.add_argument(
     "--sim",
     action="store_true",
-    help="Use the simulation environment test in the test suite (requires sim server to be running)"
+    help="Enable Test 8: runs random_agent.py via PowerShell for physics-based assemblability"
 )
 args = parser.parse_args()
 USER_PROMPT = args.prompt
@@ -79,26 +78,7 @@ if __name__ == "__main__":
         prompts = [USER_PROMPT,]
     
     
-    if USE_SIM:
-    # Start the sim environment if requested (and shut it down at the end)
-        start_config = {
-                        "num_envs": 1,
-                        "task": "Template-Pose-Orientation-Two-Robots-Direct-v0"
-                        }
-        logger.info("Starting simulation server")
-        setup_sim_environment(config=start_config)
-        # # Wait until /start has actually finished to avoid queuing /test too early.
-        timeout = 60
-        if not wait_for_sim_ready(timeout_s=timeout, poll_interval_s=0.5):
-            logger.warning(f"Simulation server did not become ready within {timeout} seconds. Exiting")
-            exit()
-        else:
-            logger.info("Simulation server is ready.")
-    
     for prompt in prompts:
         session = CutlistSession(method=METHOD, prompt=prompt, session_id=int(time.time()), use_sim=USE_SIM, parent_output_path=OUTPUT_PATH)
         session.start()
 
-    if USE_SIM:
-        # Shut down the sim environment after the run
-        shutdown_sim_environment()

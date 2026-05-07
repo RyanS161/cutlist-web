@@ -1147,13 +1147,20 @@ def test_assembly_order(result) -> TestResult:
 
 
 def test_sim_assemblability(parts_json_path) -> TestResult:
-    """Test 8: Physics-based assemblability check via the simulation server.
-    
-    Reads the parts.json file (already exported by output_utils) and sends
-    it directly to the sim server for physics-based verification.
-    
-    Gracefully skips if the sim server is unreachable or no file is provided.
+    """Test 8: Physics-based assemblability check via subprocess.
+
+    Passes the parts.json path to random_agent.py running inside the
+    env_isaaclab conda environment via PowerShell, then parses the
+    ASSEMBLY RESULTS block from stdout.
+
+    Gracefully skips if no path is provided or the file is missing.
     """
+    if not parts_json_path:
+        return TestResult(
+            name="Sim Assemblability",
+            status=TestStatus.SKIPPED,
+            message="No parts.json path provided",
+        )
 
     parts_file = Path(parts_json_path)
     if not parts_file.exists():
@@ -1165,31 +1172,18 @@ def test_sim_assemblability(parts_json_path) -> TestResult:
         )
 
     try:
-        with open(parts_file, 'r') as f:
-            parts_data = json.load(f)
-    except Exception as exc:
-        logger.error(f"Failed to read parts.json at {parts_file} for sim test: {exc}", exc_info=True)
+        sim_result = run_sim_test(str(parts_file))
+    except TimeoutError as exc:
         return TestResult(
             name="Sim Assemblability",
             status=TestStatus.ERROR,
-            message=f"Failed to read parts.json: {exc}",
+            message=f"Sim timed out: {exc}",
         )
-
-    parts_list = parts_data.get("parts", [])
-    if not parts_list:
-        return TestResult(
-            name="Sim Assemblability",
-            status=TestStatus.SKIPPED,
-            message="parts.json contains no parts",
-        )
-
-    try:
-        sim_result = run_sim_test(parts_list)
     except Exception as exc:
         return TestResult(
             name="Sim Assemblability",
             status=TestStatus.ERROR,
-            message=f"Sim server error: {exc}",
+            message=f"Sim error: {exc}",
         )
 
     # 5. Interpret the response
