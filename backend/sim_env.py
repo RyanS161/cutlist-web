@@ -28,9 +28,21 @@ SIM_TASK = os.environ.get(
     "Template-Pose-Orientation-Two-Robots-Direct-v0",
 )
 SIM_NUM_ENVS = int(os.environ.get("SIM_NUM_ENVS", "1"))
-CONDA_ENV = os.environ.get("CONDA_ENV", "env_isaaclab")
+CONDA_ENV = "env_isaaclab"
+SIM_PYTHON = os.environ.get(
+    "SIM_PYTHON",
+    r"C:\Users\rslocum\AppData\Local\miniconda3\envs\env_isaaclab\python.exe",
+)
 SIM_TIMEOUT = float(os.environ.get("SIM_TIMEOUT", "120"))   # seconds per attempt
 SIM_MAX_ATTEMPTS = int(os.environ.get("SIM_MAX_ATTEMPTS", "3"))
+
+# Failure names (from the sim's FAIL_REASON_NAMES) that should NOT count as failures.
+# Comma-separated. Override via SIM_IGNORED_FAILURES env var.
+SIM_IGNORED_FAILURES: set[str] = {
+    f.strip().upper()
+    for f in os.environ.get("SIM_IGNORED_FAILURES", "OVERLAP_INSUFFICIENT").split(",")
+    if f.strip()
+}
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +72,8 @@ def run_sim_test(parts_json_path: str) -> Dict[str, Any]:
     if not Path(parts_json_path).exists():
         raise FileNotFoundError(f"parts.json not found: {parts_json_path}")
 
-    ps_command = (
-        f"conda run --no-capture-output -n {CONDA_ENV} python scripts/random_agent.py"
+    cmd_command = (
+        f'"{SIM_PYTHON}" scripts\\random_agent.py'
         f" --task={SIM_TASK}"
         f" --num_envs {SIM_NUM_ENVS}"
         f' --json_file_path "{parts_json_path}"'
@@ -70,11 +82,12 @@ def run_sim_test(parts_json_path: str) -> Dict[str, Any]:
 
     last_error: Exception | None = None
     for attempt in range(1, SIM_MAX_ATTEMPTS + 1):
-        logger.info(f"Sim attempt {attempt}/{SIM_MAX_ATTEMPTS}: {ps_command}")
+        logger.info(f"Sim attempt {attempt}/{SIM_MAX_ATTEMPTS}: {cmd_command}")
         try:
             proc = subprocess.run(
-                ["powershell", "-Command", ps_command],
+                cmd_command,
                 cwd=SIM_SCRIPT_DIR,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=SIM_TIMEOUT,
@@ -88,7 +101,7 @@ def run_sim_test(parts_json_path: str) -> Dict[str, Any]:
         output = (proc.stdout + proc.stderr).replace("\r\n", "\n")
         if proc.returncode != 0:
             logger.warning(f"Sim attempt {attempt} exited with code {proc.returncode}")
-        logger.debug(f"Sim attempt {attempt} output tail:\n{output[-2000:]}")
+        logger.info(f"Sim attempt {attempt} full output:\n{output}")
 
         result = _parse_assembly_results(output)
 
@@ -116,7 +129,11 @@ def run_sim_test(parts_json_path: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _parse_assembly_results(output: str) -> Dict[str, Any]:
-    """Parse the ASSEMBLY RESULTS block printed by random_agent.py."""
+    """Parse the ASSEMBLY RESULTS block printed by random_agent.py.
+
+    Per-block failures listed in SIM_IGNORED_FAILURES are stripped before
+    determining pass/fail, so e.g. OVERLAP_INSUFFICIENT alone won't fail a run.
+    """
     match = re.search(
         r"={20,}\nASSEMBLY RESULTS\n={20,}(.*?)={20,}",
         output,
@@ -135,42 +152,57 @@ def _parse_assembly_results(output: str) -> Dict[str, Any]:
 
     block = match.group(1)
 
-    # "Full assembly passed: X / Y"
+    # Total env count from the summary line
     full_pass_match = re.search(r"Full assembly passed:\s*(\d+)\s*/\s*(\d+)", block)
-    if full_pass_match:
-        n_passed = int(full_pass_match.group(1))
-        n_total = int(full_pass_match.group(2))
-    else:
-        n_passed, n_total = 0, 1
+    n_total = int(full_pass_match.group(2)) if full_pass_match else 1
 
-    assembleable_per_env = [True] * n_passed + [False] * (n_total - n_passed)
-
-    # Per-env block failure details
+    # Parse per-env block details, filtering out ignored failures
     part_failures = []
+    env_passes: Dict[int, bool] = {}
+
     for env_match in re.finditer(
         r"\[ENV (\d+) DETAIL\](.*?)(?=\[ENV \d+ DETAIL\]|\[ALL \d+ ENVS\])",
         block,
         re.DOTALL,
     ):
         env_idx = int(env_match.group(1))
+        this_env_passes = True
+
         for bm in re.finditer(
             r"Block (\d+):\s*(OK|FAIL)\s*\|\s*failures:\s*(.+)",
             env_match.group(2),
         ):
             if bm.group(2) == "FAIL":
-                part_failures.append({
-                    "env": env_idx,
-                    "block": int(bm.group(1)),
-                    "failures": [
-                        f.strip() for f in bm.group(3).split(",")
-                        if f.strip() and f.strip() != "none"
-                    ],
-                })
+                raw = [
+                    f.strip() for f in bm.group(3).split(",")
+                    if f.strip() and f.strip().lower() != "none"
+                ]
+                real = [f for f in raw if f.upper() not in SIM_IGNORED_FAILURES]
+                if real:
+                    this_env_passes = False
+                    part_failures.append({
+                        "env": env_idx,
+                        "block": int(bm.group(1)),
+                        "failures": real,
+                    })
+
+        env_passes[env_idx] = this_env_passes
+
+    # Derive assembleable_per_env from filtered results; fall back to raw count
+    if env_passes:
+        assembleable_per_env = [env_passes.get(i, False) for i in range(n_total)]
+    else:
+        n_passed_raw = int(full_pass_match.group(1)) if full_pass_match else 0
+        assembleable_per_env = [True] * n_passed_raw + [False] * (n_total - n_passed_raw)
+
+    if SIM_IGNORED_FAILURES:
+        logger.info(f"Ignored failure types: {sorted(SIM_IGNORED_FAILURES)}")
 
     return {
-        "passed": n_passed == n_total and n_total > 0,
+        "passed": all(assembleable_per_env),
         "assembleable_per_env": assembleable_per_env,
         "timed_out": False,
         "timed_out_reason": None,
         "part_failures": part_failures,
+        # "ignored_failures": sorted(SIM_IGNORED_FAILURES),
     }

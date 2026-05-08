@@ -1294,6 +1294,5 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
     # Test 8: Sim-based assemblability (skips gracefully if server unavailable)
     sim_result = test_sim_assemblability(parts_json_path)
     tests.append(sim_result)
-    
 
-    return
+    return test_results(tests)
