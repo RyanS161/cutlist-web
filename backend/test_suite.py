@@ -426,28 +426,6 @@ def test_code_executes(code: str, exec_globals: dict) -> TestResult:
         )
 
 
-def test_max_parts(result) -> TestResult:
-    """Test 1: Check if the design has at most 32 parts (including screws)."""
-    all_parts = _extract_solids(result)
-    total_parts = len(all_parts)
-    max_parts = 32
-
-    if total_parts <= max_parts:
-        return TestResult(
-            name="Max Parts Constraint",
-            status=TestStatus.PASSED,
-            message=f"Design has {total_parts} part(s), within the {max_parts} part limit",
-            details={'total_parts': total_parts, 'max_parts': max_parts},
-        )
-    else:
-        return TestResult(
-            name="Max Parts Constraint",
-            status=TestStatus.FAILED,
-            message=f"Design has {total_parts} part(s), exceeds the {max_parts} part limit",
-            details={'total_parts': total_parts, 'max_parts': max_parts},
-        )
-
-
 def test_parts_in_library(result) -> TestResult:
     """Test 2: Check if all structural (non-screw) parts meet the design constraints."""
     all_parts = _extract_solids(result)
@@ -520,11 +498,11 @@ def test_parts_in_library(result) -> TestResult:
         name="Parts in Library",
         status=TestStatus.PASSED,
         message=f"All {len(parts_info)} parts meet constraints ({summary_str})",
-        details={
-            'parts_analyzed': len(parts_info),
-            'summary': part_summary,
-            'parts': parts_info,
-        }
+        # details={
+        #     'parts_analyzed': len(parts_info),
+        #     'summary': part_summary,
+        #     'parts': parts_info,
+        # }
     )
 
 
@@ -655,9 +633,9 @@ def test_no_intersections(result) -> TestResult:
         name="No Part Intersections",
         status=TestStatus.PASSED,
         message=f"No intersections found ({checked_pairs} pairs checked)",
-        details={
-            'pairs_checked': checked_pairs,
-        }
+        # details={
+        #     'pairs_checked': checked_pairs,
+        # }
     )
 
 
@@ -728,7 +706,7 @@ def test_connectivity(result: Any) -> TestResult:
             name="Part Connectivity",
             status=TestStatus.PASSED,
             message=f"All {n} parts are connected",
-            details={'component_count': 1}
+            # details={'component_count': 1}
         )
     else:
         # Identify disconnected parts
@@ -863,7 +841,7 @@ def test_static_stability(result: Any) -> TestResult:
                 name="Static Stability",
                 status=TestStatus.PASSED,
                 message=f"Design is stable (CoM is {min_margin:.1f}mm inside base)",
-                details=details
+                # details=details
             )
         else:
             return TestResult(
@@ -941,7 +919,7 @@ def test_screw_dimensions(result) -> TestResult:
         name="Screw Dimensions",
         status=TestStatus.PASSED,
         message=f"All {len(screws)} screw(s) match library dimensions",
-        details={'screws_analyzed': len(screws)},
+        # details={'screwsd_analyzed': len(screws)},
     )
 
 
@@ -1142,7 +1120,7 @@ def test_assembly_order(result) -> TestResult:
         name="Assembly Order",
         status=TestStatus.PASSED,
         message=f"All parts supported through {len(stages)} assembly stages",
-        details={'total_stages': len(stages)},
+        # details={'total_stages': len(stages)},
     )
 
 
@@ -1202,7 +1180,7 @@ def test_sim_assemblability(parts_json_path) -> TestResult:
             name="Sim Assemblability",
             status=TestStatus.PASSED,
             message="Simulation confirms assemblability",
-            details=sim_result,
+            # details=sim_result,
         )
     else:
         fail_descs = []
@@ -1259,17 +1237,9 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
             tests=tests,
         )
 
-    # Test 1: Max parts constraint
-    max_parts_result = test_max_parts(design)
-    tests.append(max_parts_result)
-    if max_parts_result.status != TestStatus.PASSED:
-        return test_results(tests)  # Fail fast if part count exceeds limit
-
     # Test 2: Parts in library
     library_result = test_parts_in_library(design)
     tests.append(library_result)
-    if library_result.status != TestStatus.PASSED:
-        return test_results(tests)  # Fail fast if parts violate library constraints
     
     # Test 3: Check for part intersections
     intersection_result = test_no_intersections(design)
@@ -1290,9 +1260,10 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
     # Test 7: Assembly Order (step-by-step support verification)
     assembly_order_result = test_assembly_order(design)
     tests.append(assembly_order_result)
-    
-    # Test 8: Sim-based assemblability (skips gracefully if server unavailable)
-    sim_result = test_sim_assemblability(parts_json_path)
-    tests.append(sim_result)
+
+    # Test 10: Sim-based assemblability (skips gracefully if server unavailable)
+    if parts_json_path:
+        sim_result = test_sim_assemblability(parts_json_path)
+        tests.append(sim_result)
 
     return test_results(tests)

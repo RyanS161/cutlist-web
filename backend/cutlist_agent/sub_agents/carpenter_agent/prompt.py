@@ -42,7 +42,6 @@ result.add(screw, name="screw1", loc=cq.Location((25, 0, 150))) # always name sc
 - Do NOT worry about visualization in the code. Add no stylizations.
 
 ### Construction Guidelines:
-- Your design MUST have at most 32 parts total (including all structural parts and screws)
 - The design should be constructed such that it is stable when it rests on the ground level
 - One screw is sufficient for fastening two parts together.
 - Screws should be placed such that the head of the screw is flush with the outer face of the part and the screw connects the two parts.
