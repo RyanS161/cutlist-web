@@ -336,7 +336,7 @@ class CutlistSession:
                     "author": event.author if hasattr(event, 'author') else None,
                     "timestamp": str(event.timestamp) if hasattr(event, 'timestamp') else None,
                 }
-                if hasattr(event, 'content') and event.content:
+                if hasattr(event, 'content') and event.content and event.content.parts:
                     parts_data = []
                     for part in event.content.parts:
                         part_info = {}
