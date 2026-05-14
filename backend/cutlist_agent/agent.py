@@ -12,7 +12,7 @@ from .sub_agents.qa_agent import qa_agent
 from .tools import search_tool
 
 root_agent = Agent(
-    model="gemini-2.5-pro",
+    model="gemini-2.5-flash",
     name="root_agent",
     description="Cutlist design coordinator that routes tasks to Carpenter and QA agents.",
     instruction=(

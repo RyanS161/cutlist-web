@@ -42,5 +42,8 @@ Be very concise, only mention provide feedback where there are clear errors. Men
 
 The Designer Agent will use your feedback to improve the design.
 
-If you find the design acceptable given all the information available to you, include in your response `QA_PASSED`.
+Passing a Design:
+- If you find the design acceptable given all the information available to you, include in your response `QA_PASSED`
+- This is to indicate to the Designer Agent that no further improvements are needed.
+- Only include `QA_PASSED` if you genuinely think the design is good enough to meet the user's needs and be successfully assembled.
 """
