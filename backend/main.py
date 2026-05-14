@@ -6,11 +6,13 @@ programmatically rather than relying on automatic sub-agent routing.
 
 Usage:
     cd backend
-    uv run python main.py                           # Interactive mode
-    uv run python main.py -p "Design a chair"      # Non-interactive with prompt
+    uv run python main.py                                          # Interactive mode
+    uv run python main.py -p "Design a chair"                     # Single prompt
+    uv run python main.py -t prompts.csv --experiment MY_EXP      # Batch experiment
 """
 
 import argparse
+import csv
 from pathlib import Path
 import os
 import time
@@ -33,10 +35,16 @@ parser.add_argument(
     help="Design prompt (if not provided, prompts interactively)"
 )
 parser.add_argument(
-    "-t", "--txt_file",
+    "-t", "--csv_file",
     type=str,
     default=None,
-    help="Path to a .txt file containing the design prompts (overrides --prompt)"
+    help="Path to a CSV file with prompt_id,prompt columns (overrides --prompt)"
+)
+parser.add_argument(
+    "--experiment",
+    type=str,
+    default=None,
+    help="Experiment label; output goes to _output/<experiment>/<prompt_id>/. Errors if already exists."
 )
 parser.add_argument(
     "-m", "--method",
@@ -52,7 +60,8 @@ parser.add_argument(
 )
 args = parser.parse_args()
 USER_PROMPT = args.prompt
-TXT_FILE = args.txt_file
+CSV_FILE = args.csv_file
+EXPERIMENT = args.experiment
 METHOD = args.method
 USE_SIM = args.sim
 
@@ -63,22 +72,40 @@ if not OUTPUT_PATH:
 
 if __name__ == "__main__":
 
+    # Resolve parent output path and validate experiment uniqueness
+    if EXPERIMENT:
+        parent_output_path = OUTPUT_PATH / EXPERIMENT
+        if parent_output_path.exists():
+            logger.error(f"Experiment '{EXPERIMENT}' already exists at {parent_output_path}. Delete it or choose a different name.")
+            exit(1)
+    else:
+        parent_output_path = OUTPUT_PATH
+
+    # Build list of (prompt_id, prompt_text) tuples
     prompts = []
 
-    if TXT_FILE:
-        if not os.path.exists(TXT_FILE):
-            logger.error(f"Specified txt file does not exist: {TXT_FILE}")
+    if CSV_FILE:
+        if not os.path.exists(CSV_FILE):
+            logger.error(f"Specified CSV file does not exist: {CSV_FILE}")
             exit(1)
-        with open(TXT_FILE, "r") as f:
-            prompts = [line.strip() for line in f if line.strip()]
-        logger.info(f"Loaded {len(prompts)} prompts from {TXT_FILE}")
+        with open(CSV_FILE, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                prompts.append((row["prompt_id"], row["prompt"]))
+        logger.info(f"Loaded {len(prompts)} prompts from {CSV_FILE}")
     else:
         if not USER_PROMPT:
             USER_PROMPT = input("\nDescribe your woodworking project:\n> ")
-        prompts = [USER_PROMPT,]
-    
-    
-    for prompt in prompts:
-        session = CutlistSession(method=METHOD, prompt=prompt, session_id=int(time.time()), use_sim=USE_SIM, parent_output_path=OUTPUT_PATH)
-        session.start()
+        prompt_id = "0" if EXPERIMENT else int(time.time())
+        prompts = [(prompt_id, USER_PROMPT)]
 
+    for prompt_id, prompt_text in prompts:
+        session_id = prompt_id if EXPERIMENT else int(time.time())
+        session = CutlistSession(
+            method=METHOD,
+            prompt=prompt_text,
+            session_id=session_id,
+            use_sim=USE_SIM,
+            parent_output_path=parent_output_path,
+        )
+        session.start()
