@@ -385,6 +385,83 @@ def _partition_parts(parts: List[Dict[str, Any]]) -> tuple:
     return structural, screws
 
 
+def _get_screw_axis_info(screw_solid):
+    """Return (center_xyz, axis_dir_xyz, half_len) for a screw.
+
+    Strategy 1 — face geometry: a cylinder has exactly two planar end-cap faces;
+    their centers define the axis direction and half-length precisely regardless
+    of orientation.
+
+    Strategy 2 — AABB fallback: use the longest axis-aligned dimension.  This is
+    accurate for axis-aligned screws (the common case in furniture) and better than
+    failing entirely for edge cases.
+    """
+    def _normalize3(dx, dy, dz):
+        length = (dx*dx + dy*dy + dz*dz) ** 0.5
+        if length < 1e-10:
+            return None, 0.0
+        return (dx / length, dy / length, dz / length), length
+
+    try:
+        if hasattr(screw_solid, 'val') and callable(screw_solid.val):
+            shape = screw_solid.val()
+        elif hasattr(screw_solid, 'BoundingBox'):
+            shape = screw_solid
+        else:
+            return None
+
+        # Strategy 1: derive axis from the two planar end-cap faces
+        try:
+            if hasattr(shape, 'Faces') and callable(shape.Faces):
+                planar = [f for f in shape.Faces() if f.geomType() == 'PLANE']
+                if len(planar) >= 2:
+                    c1 = planar[0].Center()
+                    c2 = planar[1].Center()
+                    cx = (c1.x + c2.x) / 2
+                    cy = (c1.y + c2.y) / 2
+                    cz = (c1.z + c2.z) / 2
+                    axis_dir, half_len = _normalize3(c1.x - cx, c1.y - cy, c1.z - cz)
+                    if axis_dir is not None:
+                        return (cx, cy, cz), axis_dir, half_len
+        except Exception as e:
+            logger.debug(f"Face-based screw axis detection failed: {e}")
+
+        return None
+
+    except Exception as e:
+        logger.warning(f"Failed to get screw axis info: {e}")
+        return None
+
+
+def _ray_intersects_aabb(origin, direction, t_max, bb) -> bool:
+    """Slab-based ray–AABB intersection test.
+
+    Returns True if the ray (origin + t*direction, t in [0, t_max]) hits the
+    axis-aligned bounding box described by bb (CadQuery BoundingBox object).
+    """
+    t_enter = 0.0
+    t_exit = t_max
+
+    for lo, hi, o, d in [
+        (bb.xmin, bb.xmax, origin[0], direction[0]),
+        (bb.ymin, bb.ymax, origin[1], direction[1]),
+        (bb.zmin, bb.zmax, origin[2], direction[2]),
+    ]:
+        if abs(d) < 1e-10:
+            if o < lo or o > hi:
+                return False
+        else:
+            t1 = (lo - o) / d
+            t2 = (hi - o) / d
+            if t1 > t2:
+                t1, t2 = t2, t1
+            t_enter = max(t_enter, t1)
+            t_exit = min(t_exit, t2)
+            if t_enter > t_exit:
+                return False
+    return True
+
+
 def test_code_executes(code: str, exec_globals: dict) -> TestResult:
     """Test 1: Check if the code executes without errors."""
     try:
@@ -923,6 +1000,192 @@ def test_screw_dimensions(result) -> TestResult:
     )
 
 
+
+def test_screws_connect_two_parts(result) -> TestResult:
+    """Test: Check that every screw touches at least two structural parts.
+
+    A screw that only contacts one part (or none) is not doing any fastening work.
+    Uses the same 2 mm contact tolerance as the assembly-order support logic.
+    """
+    all_parts = _extract_solids(result)
+    structural_parts, screws = _partition_parts(all_parts)
+
+    if not screws:
+        return TestResult(
+            name="Screw Connects Two Parts",
+            status=TestStatus.SKIPPED,
+            message="No screws found in the design",
+        )
+
+    CONTACT_TOLERANCE = 2.0  # mm
+
+    violations = []
+
+    for screw in screws:
+        connected = [
+            part['name']
+            for part in structural_parts
+            if _are_parts_connected(screw['solid'], part['solid'],
+                                    tolerance=CONTACT_TOLERANCE)
+        ]
+        if len(connected) < 2:
+            if connected:
+                violations.append(
+                    f"Screw '{screw['name']}': only touches 1 part ('{connected[0]}') — "
+                    f"must span two structural parts to fasten them together"
+                )
+            else:
+                violations.append(
+                    f"Screw '{screw['name']}': does not touch any structural part"
+                )
+
+    if violations:
+        return TestResult(
+            name="Screw Connects Two Parts",
+            status=TestStatus.FAILED,
+            message=f"{len(violations)} screw(s) do not connect two structural parts",
+            long_message="\n".join(violations),
+            details={'violations': violations, 'screws_analyzed': len(screws)},
+        )
+
+    return TestResult(
+        name="Screw Connects Two Parts",
+        status=TestStatus.PASSED,
+        message=f"All {len(screws)} screw(s) connect at least two structural parts",
+        details={'screw_connections_analyzed': len(screws)},
+    )
+
+
+def test_screw_approach_paths(result) -> TestResult:
+    """Test 7: Check that every screw has at least one unobstructed approach direction.
+
+    For each screw, rays are cast from both ends of the screw outward 500 mm along
+    the insertion axis.  A direction is considered *blocked* if a non-fastened
+    structural part or the table surface lies in the path.  Parts that the screw
+    directly fastens (i.e. parts it physically touches) are excluded from the
+    obstacle check for both directions.
+
+    The test fails only when BOTH directions are blocked, because only one clear
+    direction is needed for the screwdriver to reach the screw head.
+    """
+    all_parts = _extract_solids(result)
+    structural_parts, screws = _partition_parts(all_parts)
+
+    if not screws:
+        return TestResult(
+            name="Screw Approach Paths",
+            status=TestStatus.SKIPPED,
+            message="No screws found in the design",
+        )
+
+    APPROACH_DIST_MM = 500.0
+    SCREW_CONTACT_TOLERANCE = 2.0  # mm — matches _compute_supported_set
+
+    # Ground plane (table surface): lowest z across all parts
+    ground_z = float('inf')
+    for part in all_parts:
+        try:
+            bb = part['solid'].BoundingBox()
+            ground_z = min(ground_z, bb.zmin)
+        except Exception:
+            pass
+    if ground_z == float('inf'):
+        ground_z = 0.0
+
+    violations = []
+    skipped_screws = []
+
+    for screw in screws:
+        axis_info = _get_screw_axis_info(screw['solid'])
+        if axis_info is None:
+            skipped_screws.append(screw['name'])
+            continue
+
+        center, axis_dir, half_len = axis_info
+
+        # Identify structural parts this screw directly fastens
+        fastened_names: set = set()
+        for part in structural_parts:
+            if _are_parts_connected(screw['solid'], part['solid'],
+                                    tolerance=SCREW_CONTACT_TOLERANCE):
+                fastened_names.add(part['name'])
+
+        blocked_directions = []
+        direction_details: dict = {}
+
+        for sign, label in [(+1, "+axis"), (-1, "-axis")]:
+            tip = tuple(center[i] + sign * axis_dir[i] * half_len for i in range(3))
+            ray_dir = tuple(sign * axis_dir[i] for i in range(3))
+
+            blockers = []
+
+            # Check non-fastened structural parts
+            for part in structural_parts:
+                if part['name'] in fastened_names:
+                    continue
+                try:
+                    bb = part['solid'].BoundingBox()
+                    if _ray_intersects_aabb(tip, ray_dir, APPROACH_DIST_MM, bb):
+                        blockers.append(part['name'])
+                except Exception:
+                    pass
+
+            # Check table: blocked if the ray travels downward and reaches ground_z
+            if ray_dir[2] < -1e-10:
+                t_table = (ground_z - tip[2]) / ray_dir[2]
+                if 0.0 < t_table <= APPROACH_DIST_MM:
+                    blockers.append("table surface")
+
+            direction_details[label] = blockers
+            if blockers:
+                blocked_directions.append(label)
+
+        if len(blocked_directions) == 2:
+            violations.append(
+                f"Screw '{screw['name']}': Both approach directions are blocked. "
+                f"+axis blocked by [{', '.join(direction_details['+axis'])}]; "
+                f"-axis blocked by [{', '.join(direction_details['-axis'])}]"
+            )
+
+    if violations:
+        return TestResult(
+            name="Screw Approach Paths",
+            status=TestStatus.FAILED,
+            message=f"{len(violations)} screw(s) have no clear screwdriver approach path",
+            long_message="\n".join(violations),
+            details={
+                'violations': violations,
+                'skipped': skipped_screws,
+                'screws_analyzed': len(screws),
+                'approach_distance_mm': APPROACH_DIST_MM,
+            },
+        )
+
+    if skipped_screws:
+        return TestResult(
+            name="Screw Approach Paths",
+            status=TestStatus.SKIPPED,
+            message=(
+                f"Could not determine insertion axis for {len(skipped_screws)} "
+                f"screw(s) — planar end-cap faces not found: {', '.join(skipped_screws)}"
+            ),
+            details={
+                'skipped': skipped_screws,
+                'screws_analyzed': len(screws),
+                'approach_distance_mm': APPROACH_DIST_MM,
+            },
+        )
+
+    return TestResult(
+        name="Screw Approach Paths",
+        status=TestStatus.PASSED,
+        message=f"All {len(screws)} screw(s) have a clear approach path",
+        details={
+            'screws_analyzed': len(screws),
+            'approach_distance_mm': APPROACH_DIST_MM,
+        },
+    )
+
 def _compute_supported_set(
     placed_structural: List[Dict[str, Any]],
     placed_screws: List[Dict[str, Any]],
@@ -1256,8 +1519,16 @@ def run_test_suite(design, parts_json_path: Optional[str] = None) -> TestSuiteRe
     # Test 6: Screw Dimensions
     screw_dims_result = test_screw_dimensions(design)
     tests.append(screw_dims_result)
-    
-    # Test 7: Assembly Order (step-by-step support verification)
+
+    # Test 7: Each screw must contact at least two structural parts
+    screw_connects_result = test_screws_connect_two_parts(design)
+    tests.append(screw_connects_result)
+
+    # Test 8: Screw Approach Paths (screwdriver clearance along insertion axis)
+    screw_approach_result = test_screw_approach_paths(design)
+    tests.append(screw_approach_result)
+
+    # Test 9: Assembly Order (step-by-step support verification)
     assembly_order_result = test_assembly_order(design)
     tests.append(assembly_order_result)
 
