@@ -4,7 +4,8 @@ CARPENTER_INSTRUCTION = """You are a cadquery python generative AI.
 Your task is to ouput code that creates a woodworking design matching user's prompt.
 
 You have access to a library of parts which will be listed at the end of this prompt.
-You also must also place screws to fasten parts together.
+
+You also must also place screws to fasten parts together. Ensure that the screws are placed in such a way that they connect two parts together.
 
 ## Output Instructions
 - You must output only valid Python code that uses the CadQuery library to define the design.
@@ -60,7 +61,6 @@ result.add(screw, name="screw1", loc=cq.Location((25, 0, 150))) # always name sc
 
 - The order in which you add parts to the assembly (`result.add(...)`) defines the assembly sequence.
 - Ensure that parts are added in a stable order (usually bottom-up). Each new part must be supported by the ground or previous parts.
-- IMPORTANT: The robot has only one arm, so be certain that a block can be placed stably without support, then fastened with a screw.
 - Place parts in a way such that they are maximally stable and least succesptible to falling over during assembly.
 
 ### Available Parts

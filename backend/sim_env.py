@@ -38,11 +38,7 @@ SIM_MAX_ATTEMPTS = int(os.environ.get("SIM_MAX_ATTEMPTS", "3"))
 
 # Failure names (from the sim's FAIL_REASON_NAMES) that should NOT count as failures.
 # Comma-separated. Override via SIM_IGNORED_FAILURES env var.
-SIM_IGNORED_FAILURES: set[str] = {
-    f.strip().upper()
-    for f in os.environ.get("SIM_IGNORED_FAILURES", "OVERLAP_INSUFFICIENT").split(",")
-    if f.strip()
-}
+SIM_IGNORED_FAILURES: set[str] = {"OVERLAP_INSUFFICIENT"}
 
 
 # ---------------------------------------------------------------------------
